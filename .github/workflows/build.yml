@@ -135,12 +135,22 @@ jobs:
           cd immortalwrt
           artifact_name="${{ matrix.bbb }}_for_${{ matrix.aaa }}.zip"
           mkdir -p ../artifacts_to_package
-          if [ -d bin ]; then
-            find bin -type f \( -name "*.bin" -o -name "*.img" -o -name "*.ipk" \) -exec cp --parents {} ../artifacts_to_package/ \;
+
+          # 查找固件文件（bin/targets 下所有子目录）
+          echo "Looking for firmware files..."
+          firmware_files=$(find bin/targets -type f \( -name "*.bin" -o -name "*.img" -o -name "*.ipk" \))
+
+          if [ -n "$firmware_files" ]; then
+            echo "Found firmware files:"
+            echo "$firmware_files"
+            echo "$firmware_files" | xargs -I{} cp --parents {} ../artifacts_to_package/
+            cd ../artifacts_to_package
+            zip -r "../${artifact_name}" .
+            cd ..
+          else
+            echo "No firmware files found for ${artifact_name}, skipping zip."
           fi
-          cd ../artifacts_to_package
-          zip -r "../${artifact_name}" . || true
-          cd ..
+
 
       - name: Upload artifact if success
         if: success()
