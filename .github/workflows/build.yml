@@ -1,0 +1,186 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 每 2 天运行一次（UTC 时间 02:00）
+    - cron: "0 2 */2 * *"
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: build-immortalwrt-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMMORTALWRT_REPO: https://github.com/immortalwrt/immortalwrt.git
+  IMMORTALWRT_BRANCH: master
+
+jobs:
+  prepare:
+    name: Prepare Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate matrix from *.config
+        id: gen
+        shell: bash
+        run: |
+          shopt -s nullglob
+          configs=( *";"*.config )
+          if [[ ${#configs[@]} -eq 0 ]]; then
+            echo "matrix=[]" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          json='['
+          first=1
+          for cfg in "${configs[@]}"; do
+            base="$(basename "$cfg")"
+            AAA="${base%%;*}"
+            BBB="${base#*;}"
+            BBB="${BBB%.config}"
+            jobname="${BBB}for${AAA}"
+            [[ $first -eq 0 ]] && json+=','
+            json+="{\"config_path\":\"$cfg\",\"AAA\":\"$AAA\",\"BBB\":\"$BBB\",\"jobname\":\"$jobname\"}"
+            first=0
+          done
+          json+=']'
+          echo "matrix=${json}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.jobname }}
+    needs: prepare
+    if: ${{ fromJson(needs.prepare.outputs.matrix)[0] != null }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.prepare.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache downloads
+        uses: actions/cache@v4
+        with:
+          path: immortalwrt/dl
+          key: ${{ runner.os }}-immortalwrt-dl
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ${{ runner.os }}-immortalwrt-ccache
+
+      - name: Prepare build environment
+        run: |
+          sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+
+      - name: Clone ImmortalWrt (master)
+        run: |
+          git clone --depth 1 --branch "${IMMORTALWRT_BRANCH}" "${IMMORTALWRT_REPO}" immortalwrt
+
+      - name: Inject .config and optional diy.sh
+        run: |
+          cp -f "${{ matrix.config_path }}" immortalwrt/.config
+          if [[ -f diy.sh ]]; then
+            cp -f diy.sh immortalwrt/diy.sh
+            chmod +x immortalwrt/diy.sh
+          fi
+          echo "CONFIG_DEVEL=y" >> immortalwrt/.config
+          echo "CONFIG_CCACHE=y" >> immortalwrt/.config
+
+      - name: Update & install feeds
+        working-directory: immortalwrt
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Run diy.sh after feeds (if present)
+        working-directory: immortalwrt
+        run: |
+          if [[ -x ./diy.sh ]]; then ./diy.sh; fi
+
+      - name: Defconfig & build
+        working-directory: immortalwrt
+        run: |
+          make defconfig
+          make download -j8
+          export CCACHE_DIR="$HOME/.ccache"
+          export CCACHE_COMPRESS=1
+          export CCACHE_MAXSIZE=2G
+          which ccache && ccache -M 2G || true
+          make -j"$(nproc)" V=s
+
+      - name: Package firmware
+        id: pack
+        working-directory: immortalwrt
+        run: |
+          outdir="bin/targets"
+          tdir=$(find "$outdir" -mindepth 2 -maxdepth 2 -type d | head -n1)
+          archive="${{ matrix.jobname }}-${{ github.run_id }}.zip"
+          (cd "$tdir"/.. && zip -r "$archive" "$(basename "$tdir")" -x "$(basename "$tdir")/packages/**")
+          mkdir -p ../_dist
+          mv "$tdir"/../"$archive" ../_dist/
+          echo "archive=immortalwrt/_dist/$archive" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.jobname }}
+          path: ${{ steps.pack.outputs.archive }}
+          retention-days: 7
+
+  release:
+    name: Create Release & Upload Assets
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ always() && needs.build.result != 'skipped' }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List assets
+        run: ls -lh dist
+
+      - name: Create tag name
+        id: tag
+        run: |
+          ts="$(date -u +'%Y%m%d-%H%M%S')"
+          echo "tag=immortalwrt-${ts}" >> "$GITHUB_OUTPUT"
+          echo "name=ImmortalWrt nightly ${ts} (UTC)" >> "$GITHUB_OUTPUT"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.name }}
+          draft: false
+          prerelease: false
+          files: |
+            dist/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  cleanup:
+    name: Cleanup old releases & artifacts
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      - name: Delete old releases (keep last 5)
+        uses: dev-drprasad/delete-older-releases@v0.3.3
+        with:
+          keep_latest: 5
+          delete_tags: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Delete old workflow runs (keep last 10)
+        uses: Mattraks/delete-older-workflow-runs@v2
+        with:
+          retain_days: 0
+          keep_minimum_runs: 10
