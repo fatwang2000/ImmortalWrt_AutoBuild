@@ -1,34 +1,26 @@
 name: ImmortalWRT build & release
 
-# 不对 push/PR 触发（按你的要求：代码更新时不自动运行）
 on:
   workflow_dispatch: {}           # 支持手动触发
   schedule:
-    # 每两天一次（基于日历的 */2），注意 GitHub cron 是基于 UTC
-    - cron: '0 0 */2 * *'
+    - cron: '0 0 */2 * *'        # 每两天一次，UTC
 
 permissions:
-  contents: read
-  packages: write
-  actions: read
-  issues: write
-  pull-requests: read
-  # release 需要写权限
   contents: write
+  actions: read
 
 concurrency:
-  group: immortalwrt-build-${{ github.ref || github.workflow }}  # 避免并发冲突
+  group: immortalwrt-build-${{ github.ref || github.workflow }}
   cancel-in-progress: false
 
 jobs:
-  # 1) 准备 matrix：列出仓库中所有匹配 "AAA;BBB.config" 的文件，输出 JSON 给下游 jobs 使用
   prepare-matrix:
     name: Prepare matrix from configs
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - name: Checkout master branch only
+      - name: Checkout master
         uses: actions/checkout@v4
         with:
           ref: master
@@ -37,22 +29,15 @@ jobs:
       - name: Find config files and build matrix JSON
         id: set-matrix
         run: |
-          # 寻找仓库里所有按规则命名的 config（支持子目录）
           files=$(git ls-files '*;*.config' || true)
-          echo "Found files:"
-          echo "$files"
-
           arr=""
           first=true
           for f in $files; do
             base=$(basename "$f")
-            # AAA;BBB.config -> AAA 和 BBB
             aaa="${base%%;*}"
-            bbb_with_ext="${base#*;}"
-            bbb="${bbb_with_ext%.config}"
-            # escape slash in path
-            path="$f"
-            item="{\"aaa\":\"${aaa}\",\"bbb\":\"${bbb}\",\"path\":\"${path}\"}"
+            bbb="${base#*;}"
+            bbb="${bbb%.config}"
+            item="{\"aaa\":\"${aaa}\",\"bbb\":\"${bbb}\",\"path\":\"${f}\"}"
             if [ "$first" = true ]; then
               arr="$item"
               first=false
@@ -60,22 +45,16 @@ jobs:
               arr="${arr},${item}"
             fi
           done
-
           if [ -z "$arr" ]; then
             matrix_json="[]"
           else
             matrix_json="[$arr]"
           fi
-
-          echo "matrix_json=$matrix_json"
-          # output to GH Actions
           echo "matrix=$matrix_json" >> $GITHUB_OUTPUT
 
-  # 2) build job：基于上面的 matrix 并行构建
   build:
     name: Build ${{ matrix.bbb }}_for_${{ matrix.aaa }}
     needs: prepare-matrix
-    # 动态从 prepare-matrix 输出中构建 matrix（当没有 config 时，这个 job 将不会被创建）
     strategy:
       fail-fast: false
       matrix:
@@ -83,9 +62,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BUILD_BRANCH: master
-      # CCACHE_DIR 设置到 workspace 下，方便缓存
       CCACHE_DIR: ${{ github.workspace }}/ccache
-      # 可调整并行线程
       MAKEFLAGS: -j$(nproc)
     steps:
       - name: Checkout master
@@ -98,38 +75,24 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ${{ github.workspace }}/dl
-            ${{ github.workspace }}/ccache
-          key: immortalwrt-cache-${{ runner.os }}-master-${{ matrix.aaa }}-${{ matrix.bbb }}-${{ hashFiles(github.workspace + '/**/*;*.config') }}
+            dl
+            ccache
+          key: immortalwrt-cache-${{ runner.os }}-master-${{ matrix.aaa }}-${{ matrix.bbb }}-${{ hashFiles('**/*;*.config') }}
           restore-keys: |
             immortalwrt-cache-${{ runner.os }}-master-
 
       - name: Ensure CCACHE env
         run: |
           mkdir -p "${CCACHE_DIR}"
-          echo "Using CCACHE_DIR=${CCACHE_DIR}"
-          # make sure ccache exists; simple test:
           ccache --version || true
 
-      - name: Prepare build environment (remote script as requested)
-        # 你指定要用 sudo 来运行 init_build_environment 脚本
-        run: |
-          sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
-        # 注意：该脚本的行为取决于脚本本身，保证 runner 上允许 sudo
+      - name: Prepare build environment
+        run: sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
 
       - name: Copy .config into build root
         run: |
-          # matrix.path 指向仓库内的配置文件路径，例如 "configs/AAA;BBB.config" 或根目录
           CONFIG_SRC="${{ matrix.path }}"
-          echo "Using config: $CONFIG_SRC"
-          if [ ! -f "$CONFIG_SRC" ]; then
-            echo "Config file not found: $CONFIG_SRC"
-            exit 2
-          fi
-          # 复制到工作目录根，并重命名为 .config
           cp "$CONFIG_SRC" .config
-          ls -l .config
-          # run defconfig so build system knows the configuration
           make defconfig
 
       - name: Update & install feeds
@@ -137,23 +100,17 @@ jobs:
           ./scripts/feeds update -a || true
           ./scripts/feeds install -a
 
-      - name: Copy diy.sh if exists (must be placed in repo root)
+      - name: Copy diy.sh if exists
         run: |
           if [ -f "${{ github.workspace }}/diy.sh" ]; then
-            echo "diy.sh found in repo root; copying and making executable."
             cp "${{ github.workspace }}/diy.sh" .
             chmod +x diy.sh
-          else
-            echo "diy.sh not found in repo root; skipping copy."
           fi
 
-      - name: Execute diy.sh if present (after feeds install)
+      - name: Execute diy.sh if present
         run: |
           if [ -f ./diy.sh ]; then
-            echo "Running diy.sh ..."
             ./diy.sh
-          else
-            echo "No diy.sh to run."
           fi
 
       - name: Enable ccache and build
@@ -161,144 +118,121 @@ jobs:
           USE_CCACHE: "1"
           CCACHE_DIR: ${{ github.workspace }}/ccache
         run: |
-          echo "USE_CCACHE=$USE_CCACHE"
-          echo "CCACHE_DIR=$CCACHE_DIR"
           export USE_CCACHE=1
-          export CCACHE_DIR="$CCACHE_DIR"
+          export CCACHE_DIR="${CCACHE_DIR}"
           mkdir -p "$CCACHE_DIR"
-          # 清晰输出编译信息
-          set -o pipefail
-          # 这里启动编译；若你需要在编译时限制内存/threads 可调整 MAKEFLAGS env
           make defconfig
           make V=s $MAKEFLAGS 2>&1 | tee build.log
 
-      - name: Collect build artifacts and compress single package
+      - name: Collect firmware artifacts only
         if: success()
         run: |
-          # 查找生成的固件（通常在 bin/targets/... 下），将它们打包为单个 zip
           artifact_name="${{ matrix.bbb }}_for_${{ matrix.aaa }}.zip"
-          echo "Creating artifact ${artifact_name}"
           mkdir -p artifacts_to_package
-          # 把 bin 目录下的所有文件都放进去（可根据实际需求缩小匹配）
           if [ -d bin ]; then
-            cp -a bin artifacts_to_package/ || true
+            find bin -type f \( -name "*.bin" -o -name "*.img" -o -name "*.ipk" \) -exec cp --parents {} artifacts_to_package/ \;
           fi
-          # 也可以把 build.log 放进去，便于排查
-          cp -a build.log artifacts_to_package/ || true
-          # 打包为单个 zip（存放到 workspace）
           cd artifacts_to_package
           zip -r "../${artifact_name}" . || true
           cd ..
-          ls -lh "${artifact_name}"
-          echo "Artifact ready at $(pwd)/${artifact_name}"
 
-      - name: Upload artifact (single zip per job)
+      - name: Upload artifact if success
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.bbb }}_for_${{ matrix.aaa }}
           path: ${{ github.workspace }}/${{ matrix.bbb }}_for_${{ matrix.aaa }}.zip
 
-      # 上传失败也不应阻止其它并行 job（各 job 独立），默认行为即可
+      - name: Upload build.log as separate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.bbb }}_for_${{ matrix.aaa }}_log
+          path: build.log
 
-  # 3) collect & release job：下载所有 build job 上传的 artifacts 到 ./artifacts，
-  #    创建 GitHub Release，并把每个 artifact 单独上传为 release asset。
   release:
     name: Create release and upload artifacts
     needs: build
     runs-on: ubuntu-latest
-    if: always()   # 即使某些 build job 失败，也要尝试收集成功的产物并发布
+    if: always()
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      RELEASE_KEEP: 5   # 保留最近的 release 数量，超过的会被删除
+      RELEASE_KEEP: 5
     steps:
-      - name: Checkout (for any scripts)
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: master
           fetch-depth: 0
 
       - name: Download all artifacts into ./artifacts
-        # actions/download-artifact 支持不指定 name 来下载所有 artifacts
         uses: actions/download-artifact@v4
         with:
           path: ./artifacts
 
-      - name: List downloaded artifacts
+      - name: Collect build logs and success/fail info
+        id: collect_info
         run: |
-          echo "Artifacts in ./artifacts:"
-          ls -R ./artifacts || true
+          SUCCESS_LIST=""
+          FAIL_LOGS=""
+          mkdir -p ./firmware_artifacts
+          for d in ./artifacts/*; do
+            for f in "$d"/*; do
+              fname=$(basename "$f")
+              if [[ "$fname" == *.zip ]]; then
+                cp "$f" ./firmware_artifacts/
+                SUCCESS_LIST="$SUCCESS_LIST\n- $fname"
+              elif [[ "$fname" == build.log ]]; then
+                FAIL_LOGS="$FAIL_LOGS\n==== $fname ====\n$(cat "$f")"
+              fi
+            done
+          done
+          echo "success_artifacts=$SUCCESS_LIST" >> $GITHUB_OUTPUT
+          echo "fail_logs=$FAIL_LOGS" >> $GITHUB_OUTPUT
 
-      - name: Create release (tagged)
+      - name: Create release with build status
         id: create_release
         run: |
-          # 使用时间戳 + run id 作为 tag，避免重复
           tag="build-${{ github.run_id }}"
-          body="Automated build release from workflow run ${{ github.run_id }} on branch ${BUILD_BRANCH:-master}."
-          # Use GitHub API to create a release
+          body="Automated build release from workflow run ${{ github.run_id }} on branch ${BUILD_BRANCH:-master}.\n\n"
+          body="$body Successful builds:${{ steps.collect_info.outputs.success_artifacts }}\n\n"
+          if [[ -n "${{ steps.collect_info.outputs.fail_logs }}" ]]; then
+            body="$body Failed builds logs:\n${{ steps.collect_info.outputs.fail_logs }}"
+          fi
           api_url="https://api.github.com/repos/${{ github.repository }}/releases"
           data=$(jq -n --arg tag "$tag" --arg body "$body" '{ tag_name: $tag, name: $tag, body: $body, draft: false, prerelease: false }')
-          echo "Creating release with tag $tag"
           resp=$(curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" -H "Content-Type: application/json" -d "$data" "$api_url")
           echo "$resp" > /tmp/release_resp.json
           upload_url=$(jq -r .upload_url /tmp/release_resp.json)
           release_id=$(jq -r .id /tmp/release_resp.json)
-          if [ "$release_id" = "null" ] || [ -z "$release_id" ]; then
-            echo "Failed to create release:"
-            cat /tmp/release_resp.json
-            exit 1
-          fi
-          echo "Created release id=$release_id upload_url=$upload_url"
           echo "upload_url=$upload_url" >> $GITHUB_OUTPUT
           echo "release_id=$release_id" >> $GITHUB_OUTPUT
 
-      - name: Upload artifacts to the release (each file separately)
+      - name: Upload successful firmware artifacts to release
         run: |
           upload_url="${{ steps.create_release.outputs.upload_url }}"
-          release_id="${{ steps.create_release.outputs.release_id }}"
-          if [ -z "$upload_url" ] || [ -z "$release_id" ]; then
-            echo "Missing release info"
-            exit 1
-          fi
-          # upload each file in ./artifacts (recursively)
-          cd ./artifacts
-          set -e
-          for f in $(find . -type f); do
-            file=${f#./}
-            echo "Uploading $file to release..."
-            # need to URL-encode filename for the upload_url
-            # curl will replace {?name,label} by appending ?name=... so we use the template
+          cd ./firmware_artifacts
+          for f in $(find . -type f -name "*.zip"); do
             curl --fail -s -X POST \
               -H "Authorization: token $GITHUB_TOKEN" \
               -H "Content-Type: application/octet-stream" \
-              --data-binary @"$file" \
-              "${upload_url%\{*}?name=$(basename "$file")"
-            echo "Uploaded $file"
+              --data-binary @"$f" \
+              "${upload_url%\{*}?name=$(basename "$f")"
           done
           cd -
 
-      - name: Cleanup older releases (keep only $RELEASE_KEEP most recent)
+      - name: Cleanup older releases
         run: |
           keep=${{ env.RELEASE_KEEP }}
-          echo "Keeping most recent $keep releases; older will be deleted."
-          # List releases, sorted by published_at desc, get ids beyond the first $keep, delete them
           api="https://api.github.com/repos/${{ github.repository }}/releases"
           releases=$(curl -s -H "Authorization: token $GITHUB_TOKEN" "$api")
-          # build array of ids sorted by published_at desc
           ids=$(echo "$releases" | jq -r 'sort_by(.published_at) | reverse | .[].id')
           idx=0
           for id in $ids; do
-            if [ $idx -lt $keep ]; then
-              idx=$((idx+1))
-              continue
-            fi
-            echo "Deleting release id=$id"
+            if [ $idx -lt $keep ]; then idx=$((idx+1)); continue; fi
             del_url="https://api.github.com/repos/${{ github.repository }}/releases/$id"
             curl -s -X DELETE -H "Authorization: token $GITHUB_TOKEN" "$del_url"
-            # also delete associated tags (optional): get tag_name and delete ref
-            tag_name=$(echo "$releases" | jq -r --argjson ID $id '.[] | select(.id == $ID) | .tag_name' )
+            tag_name=$(echo "$releases" | jq -r --argjson ID $id '.[] | select(.id == $ID) | .tag_name')
             if [ -n "$tag_name" ] && [ "$tag_name" != "null" ]; then
-              echo "Deleting tag ref refs/tags/$tag_name"
               curl -s -X DELETE -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/${{ github.repository }}/git/refs/tags/$tag_name" || true
             fi
             idx=$((idx+1))
