@@ -43,7 +43,7 @@ jobs:
             AAA="${base%%;*}"
             BBB="${base#*;}"
             BBB="${BBB%.config}"
-            jobname="${BBB}for${AAA}"
+            jobname="${BBB}_for_${AAA}"
             [[ $first -eq 0 ]] && json+=','
             json+="{\"config_path\":\"$cfg\",\"AAA\":\"$AAA\",\"BBB\":\"$BBB\",\"jobname\":\"$jobname\"}"
             first=0
