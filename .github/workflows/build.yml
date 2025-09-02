@@ -1,261 +1,29 @@
-name: ImmortalWRT build & release
+SUCCESS_LIST=""
+FAIL_LOGS=""
+mkdir -p ./firmware_artifacts
 
-on:
-  workflow_dispatch: {}           # 手动触发
-  schedule:
-    - cron: '0 0 */2 * *'        # 每两天一次，UTC
+for d in ./artifacts/*; do
+  for f in "$d"/*; do
+    fname=$(basename "$f")
+    if [[ "$fname" == *.zip ]]; then
+      cp "$f" ./firmware_artifacts/
+      SUCCESS_LIST="$SUCCESS_LIST\n- $fname"
+    elif [[ "$fname" == build.log ]]; then
+      FAIL_LOGS="$FAIL_LOGS\n==== $fname ====\n$(cat "$f")"
+    fi
+  done
+done
 
-permissions:
-  contents: write
-  actions: read
+# 输出成功列表
+{
+  echo "success_artifacts<<EOF"
+  echo -e "$SUCCESS_LIST"
+  echo "EOF"
+} >> "$GITHUB_OUTPUT"
 
-concurrency:
-  group: immortalwrt-build-${{ github.ref || github.workflow }}
-  cancel-in-progress: false
-
-jobs:
-  prepare-matrix:
-    name: Prepare matrix from configs
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-    steps:
-      - name: Checkout default branch
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Find config files and build matrix JSON
-        id: set-matrix
-        run: |
-          files=$(git ls-files '*;*.config' || true)
-          arr=""
-          first=true
-          for f in $files; do
-            base=$(basename "$f")
-            aaa="${base%%;*}"
-            bbb="${base#*;}"
-            bbb="${bbb%.config}"
-            item="{\"aaa\":\"${aaa}\",\"bbb\":\"${bbb}\",\"path\":\"${f}\"}"
-            if [ "$first" = true ]; then
-              arr="$item"
-              first=false
-            else
-              arr="${arr},${item}"
-            fi
-          done
-          if [ -z "$arr" ]; then
-            matrix_json="[]"
-          else
-            matrix_json="[$arr]"
-          fi
-          echo "matrix=$matrix_json" >> $GITHUB_OUTPUT
-
-  build:
-    name: Build ${{ matrix.bbb }}_for_${{ matrix.aaa }}
-    needs: prepare-matrix
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJson(needs.prepare-matrix.outputs.matrix) }}
-    runs-on: ubuntu-latest
-    env:
-      BUILD_BRANCH: master
-      CCACHE_DIR: ${{ github.workspace }}/ccache
-      MAKEFLAGS: -j$(nproc)
-    steps:
-      - name: Checkout default branch
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up cache for dl/ and ccache
-        uses: actions/cache@v4
-        with:
-          path: |
-            dl
-            ccache
-          key: immortalwrt-cache-${{ runner.os }}-master-${{ matrix.aaa }}-${{ matrix.bbb }}-${{ hashFiles('**/*;*.config') }}
-          restore-keys: |
-            immortalwrt-cache-${{ runner.os }}-master-
-
-      - name: Ensure CCACHE env
-        run: |
-          mkdir -p "${CCACHE_DIR}"
-          ccache --version || true
-
-      - name: Prepare build environment
-        run: sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
-
-      - name: Clone ImmortalWRT master
-        run: |
-          IMMORTALWRT_REPO=https://github.com/immortalwrt/immortalwrt.git
-          IMMORTALWRT_BRANCH=master
-          rm -rf immortalwrt
-          git clone --depth 1 --branch "$IMMORTALWRT_BRANCH" "$IMMORTALWRT_REPO" immortalwrt
-
-      - name: Copy .config and prepare
-        run: |
-          CONFIG_SRC="${{ github.workspace }}/${{ matrix.path }}"
-          cp "$CONFIG_SRC" immortalwrt/.config
-          cd immortalwrt
-          make defconfig
-
-      - name: Update & install feeds
-        run: |
-          cd immortalwrt
-          ./scripts/feeds update -a || true
-          ./scripts/feeds install -a
-
-      - name: Copy and run diy.sh if exists
-        run: |
-          if [ -f "${{ github.workspace }}/diy.sh" ]; then
-            cp "${{ github.workspace }}/diy.sh" immortalwrt/
-            chmod +x immortalwrt/diy.sh
-            cd immortalwrt
-            ./diy.sh
-          else
-            cd immortalwrt
-          fi
-
-      - name: Enable ccache and build
-        env:
-          USE_CCACHE: "1"
-          CCACHE_DIR: ${{ github.workspace }}/ccache
-        run: |
-          cd immortalwrt
-          export USE_CCACHE=1
-          export CCACHE_DIR="${CCACHE_DIR}"
-          mkdir -p "$CCACHE_DIR"
-          make V=s $MAKEFLAGS 2>&1 | tee build.log
-
-      - name: Collect firmware artifacts safely
-        if: success()
-        run: |
-          cd immortalwrt
-          artifact_name="${{ matrix.bbb }}_for_${{ matrix.aaa }}.zip"
-          mkdir -p ../artifacts_to_package
-
-          if [ -d bin/targets ]; then
-            echo "Looking for firmware files..."
-            firmware_files=$(find bin/targets -type f \( -name "*.bin" -o -name "*.img" -o -name "*.ipk" \))
-            if [ -n "$firmware_files" ]; then
-              echo "Found firmware files:"
-              echo "$firmware_files"
-              echo "$firmware_files" | xargs -I{} cp --parents {} ../artifacts_to_package/
-              cd ../artifacts_to_package
-              zip -r "../${artifact_name}" .
-              cd ..
-            else
-              echo "No firmware files found in bin/targets for ${artifact_name}, skipping zip."
-            fi
-          else
-            echo "No bin/targets directory found for ${artifact_name}, skipping zip."
-          fi
-
-      - name: Upload artifact if success
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.bbb }}_for_${{ matrix.aaa }}
-          path: ${{ github.workspace }}/artifacts_to_package/${{ matrix.bbb }}_for_${{ matrix.aaa }}.zip
-
-      - name: Upload build.log as separate artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.bbb }}_for_${{ matrix.aaa }}_log
-          path: immortalwrt/build.log
-
-  release:
-    name: Create release and upload artifacts
-    needs: build
-    runs-on: ubuntu-latest
-    if: always()
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      RELEASE_KEEP: 5
-    steps:
-      - name: Checkout default branch
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Download all artifacts into ./artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: ./artifacts
-
-      - name: Collect build logs and success/fail info
-        id: collect_info
-        run: |
-          SUCCESS_LIST=""
-          FAIL_LOGS=""
-          mkdir -p ./firmware_artifacts
-          for d in ./artifacts/*; do
-            for f in "$d"/*; do
-              fname=$(basename "$f")
-              if [[ "$fname" == *.zip ]]; then
-                cp "$f" ./firmware_artifacts/
-                SUCCESS_LIST="$SUCCESS_LIST\n- $fname"
-              elif [[ "$fname" == build.log ]]; then
-                FAIL_LOGS="$FAIL_LOGS\n==== $fname ====\n$(cat "$f")"
-              fi
-            done
-          done
-
-          # 将换行和特殊字符转义为 GitHub 输出安全格式
-          safe_success=$(echo -e "$SUCCESS_LIST" | sed 's/%/%25/g; s/\n/%0A/g; s/\r/%0D/g')
-          safe_fail=$(echo -e "$FAIL_LOGS"    | sed 's/%/%25/g; s/\n/%0A/g; s/\r/%0D/g')
-
-          echo "success_artifacts=$safe_success" >> $GITHUB_OUTPUT
-          echo "fail_logs=$safe_fail" >> $GITHUB_OUTPUT
-
-
-      - name: Create release with build status
-        id: create_release
-        run: |
-          tag="build-${{ github.run_id }}"
-          body="Automated build release from workflow run ${{ github.run_id }} on branch ${BUILD_BRANCH:-master}.\n\n"
-          body="$body Successful builds:${{ steps.collect_info.outputs.success_artifacts }}\n\n"
-          if [[ -n "${{ steps.collect_info.outputs.fail_logs }}" ]]; then
-            body="$body Failed builds logs:\n${{ steps.collect_info.outputs.fail_logs }}"
-          fi
-          api_url="https://api.github.com/repos/${{ github.repository }}/releases"
-          data=$(jq -n --arg tag "$tag" --arg body "$body" '{ tag_name: $tag, name: $tag, body: $body, draft: false, prerelease: false }')
-          resp=$(curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" -H "Content-Type: application/json" -d "$data" "$api_url")
-          echo "$resp" > /tmp/release_resp.json
-          upload_url=$(jq -r .upload_url /tmp/release_resp.json)
-          release_id=$(jq -r .id /tmp/release_resp.json)
-          echo "upload_url=$upload_url" >> $GITHUB_OUTPUT
-          echo "release_id=$release_id" >> $GITHUB_OUTPUT
-
-      - name: Upload successful firmware artifacts to release
-        run: |
-          upload_url="${{ steps.create_release.outputs.upload_url }}"
-          cd ./firmware_artifacts
-          for f in $(find . -type f -name "*.zip"); do
-            curl --fail -s -X POST \
-              -H "Authorization: token $GITHUB_TOKEN" \
-              -H "Content-Type: application/octet-stream" \
-              --data-binary @"$f" \
-              "${upload_url%\{*}?name=$(basename "$f")"
-          done
-          cd -
-
-      - name: Cleanup older releases
-        run: |
-          keep=${{ env.RELEASE_KEEP }}
-          api="https://api.github.com/repos/${{ github.repository }}/releases"
-          releases=$(curl -s -H "Authorization: token $GITHUB_TOKEN" "$api")
-          ids=$(echo "$releases" | jq -r 'sort_by(.published_at) | reverse | .[].id')
-          idx=0
-          for id in $ids; do
-            if [ $idx -lt $keep ]; then idx=$((idx+1)); continue; fi
-            del_url="https://api.github.com/repos/${{ github.repository }}/releases/$id"
-            curl -s -X DELETE -H "Authorization: token $GITHUB_TOKEN" "$del_url"
-            tag_name=$(echo "$releases" | jq -r --argjson ID $id '.[] | select(.id == $ID) | .tag_name')
-            if [ -n "$tag_name" ] && [ "$tag_name" != "null" ]; then
-              curl -s -X DELETE -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/${{ github.repository }}/git/refs/tags/$tag_name" || true
-            fi
-            idx=$((idx+1))
-          done
+# 输出失败日志
+{
+  echo "fail_logs<<EOF"
+  echo -e "$FAIL_LOGS"
+  echo "EOF"
+} >> "$GITHUB_OUTPUT"
