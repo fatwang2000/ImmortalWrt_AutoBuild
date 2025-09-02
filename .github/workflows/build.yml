@@ -1,7 +1,7 @@
 name: ImmortalWRT build & release
 
 on:
-  workflow_dispatch: {}           # 支持手动触发
+  workflow_dispatch: {}           # 手动触发
   schedule:
     - cron: '0 0 */2 * *'        # 每两天一次，UTC
 
@@ -20,10 +20,9 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - name: Checkout master
+      - name: Checkout default branch
         uses: actions/checkout@v4
         with:
-          ref: master
           fetch-depth: 0
 
       - name: Find config files and build matrix JSON
@@ -65,10 +64,9 @@ jobs:
       CCACHE_DIR: ${{ github.workspace }}/ccache
       MAKEFLAGS: -j$(nproc)
     steps:
-      - name: Checkout master
+      - name: Checkout default branch
         uses: actions/checkout@v4
         with:
-          ref: master
           fetch-depth: 0
 
       - name: Set up cache for dl/ and ccache
@@ -89,28 +87,35 @@ jobs:
       - name: Prepare build environment
         run: sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
 
-      - name: Copy .config into build root
+      - name: Clone ImmortalWRT master
         run: |
-          CONFIG_SRC="${{ matrix.path }}"
-          cp "$CONFIG_SRC" .config
+          IMMORTALWRT_REPO=https://github.com/immortalwrt/immortalwrt.git
+          IMMORTALWRT_BRANCH=master
+          rm -rf immortalwrt
+          git clone --depth 1 --branch "$IMMORTALWRT_BRANCH" "$IMMORTALWRT_REPO" immortalwrt
+
+      - name: Copy .config and prepare
+        run: |
+          CONFIG_SRC="${{ github.workspace }}/${{ matrix.path }}"
+          cp "$CONFIG_SRC" immortalwrt/.config
+          cd immortalwrt
           make defconfig
 
       - name: Update & install feeds
         run: |
+          cd immortalwrt
           ./scripts/feeds update -a || true
           ./scripts/feeds install -a
 
-      - name: Copy diy.sh if exists
+      - name: Copy and run diy.sh if exists
         run: |
           if [ -f "${{ github.workspace }}/diy.sh" ]; then
-            cp "${{ github.workspace }}/diy.sh" .
-            chmod +x diy.sh
-          fi
-
-      - name: Execute diy.sh if present
-        run: |
-          if [ -f ./diy.sh ]; then
+            cp "${{ github.workspace }}/diy.sh" immortalwrt/
+            chmod +x immortalwrt/diy.sh
+            cd immortalwrt
             ./diy.sh
+          else
+            cd immortalwrt
           fi
 
       - name: Enable ccache and build
@@ -118,21 +123,22 @@ jobs:
           USE_CCACHE: "1"
           CCACHE_DIR: ${{ github.workspace }}/ccache
         run: |
+          cd immortalwrt
           export USE_CCACHE=1
           export CCACHE_DIR="${CCACHE_DIR}"
           mkdir -p "$CCACHE_DIR"
-          make defconfig
           make V=s $MAKEFLAGS 2>&1 | tee build.log
 
       - name: Collect firmware artifacts only
         if: success()
         run: |
+          cd immortalwrt
           artifact_name="${{ matrix.bbb }}_for_${{ matrix.aaa }}.zip"
-          mkdir -p artifacts_to_package
+          mkdir -p ../artifacts_to_package
           if [ -d bin ]; then
-            find bin -type f \( -name "*.bin" -o -name "*.img" -o -name "*.ipk" \) -exec cp --parents {} artifacts_to_package/ \;
+            find bin -type f \( -name "*.bin" -o -name "*.img" -o -name "*.ipk" \) -exec cp --parents {} ../artifacts_to_package/ \;
           fi
-          cd artifacts_to_package
+          cd ../artifacts_to_package
           zip -r "../${artifact_name}" . || true
           cd ..
 
@@ -141,13 +147,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.bbb }}_for_${{ matrix.aaa }}
-          path: ${{ github.workspace }}/${{ matrix.bbb }}_for_${{ matrix.aaa }}.zip
+          path: ${{ github.workspace }}/artifacts_to_package/${{ matrix.bbb }}_for_${{ matrix.aaa }}.zip
 
       - name: Upload build.log as separate artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.bbb }}_for_${{ matrix.aaa }}_log
-          path: build.log
+          path: immortalwrt/build.log
 
   release:
     name: Create release and upload artifacts
@@ -158,10 +164,9 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RELEASE_KEEP: 5
     steps:
-      - name: Checkout
+      - name: Checkout default branch
         uses: actions/checkout@v4
         with:
-          ref: master
           fetch-depth: 0
 
       - name: Download all artifacts into ./artifacts
