@@ -129,26 +129,28 @@ jobs:
           mkdir -p "$CCACHE_DIR"
           make V=s $MAKEFLAGS 2>&1 | tee build.log
 
-      - name: Collect firmware artifacts only
+      - name: Collect firmware artifacts safely
         if: success()
         run: |
           cd immortalwrt
           artifact_name="${{ matrix.bbb }}_for_${{ matrix.aaa }}.zip"
           mkdir -p ../artifacts_to_package
 
-          # 查找所有 target 下固件
-          echo "Looking for firmware files..."
-          firmware_files=$(find bin/targets -type f \( -name "*.bin" -o -name "*.img" -o -name "*.ipk" \))
-
-          if [ -n "$firmware_files" ]; then
-            echo "Found firmware files:"
-            echo "$firmware_files"
-            echo "$firmware_files" | xargs -I{} cp --parents {} ../artifacts_to_package/
-            cd ../artifacts_to_package
-            zip -r "../${artifact_name}" .
-            cd ..
+          if [ -d bin/targets ]; then
+            echo "Looking for firmware files..."
+            firmware_files=$(find bin/targets -type f \( -name "*.bin" -o -name "*.img" -o -name "*.ipk" \))
+            if [ -n "$firmware_files" ]; then
+              echo "Found firmware files:"
+              echo "$firmware_files"
+              echo "$firmware_files" | xargs -I{} cp --parents {} ../artifacts_to_package/
+              cd ../artifacts_to_package
+              zip -r "../${artifact_name}" .
+              cd ..
+            else
+              echo "No firmware files found in bin/targets for ${artifact_name}, skipping zip."
+            fi
           else
-            echo "No firmware files found for ${artifact_name}, skipping zip."
+            echo "No bin/targets directory found for ${artifact_name}, skipping zip."
           fi
 
       - name: Upload artifact if success
