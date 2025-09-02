@@ -1,29 +1,149 @@
-SUCCESS_LIST=""
-FAIL_LOGS=""
-mkdir -p ./firmware_artifacts
+name: Build ImmortalWrt
 
-for d in ./artifacts/*; do
-  for f in "$d"/*; do
-    fname=$(basename "$f")
-    if [[ "$fname" == *.zip ]]; then
-      cp "$f" ./firmware_artifacts/
-      SUCCESS_LIST="$SUCCESS_LIST\n- $fname"
-    elif [[ "$fname" == build.log ]]; then
-      FAIL_LOGS="$FAIL_LOGS\n==== $fname ====\n$(cat "$f")"
-    fi
-  done
-done
+on:
+  schedule:
+    - cron: '0 0 */2 * *'
+  workflow_dispatch:
 
-# 输出成功列表
-{
-  echo "success_artifacts<<EOF"
-  echo -e "$SUCCESS_LIST"
-  echo "EOF"
-} >> "$GITHUB_OUTPUT"
+permissions:
+  contents: write
 
-# 输出失败日志
-{
-  echo "fail_logs<<EOF"
-  echo -e "$FAIL_LOGS"
-  echo "EOF"
-} >> "$GITHUB_OUTPUT"
+jobs:
+  generate-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate matrix from config files
+        id: set-matrix
+        run: |
+          configs=$(ls *.config 2>/dev/null | grep ';' || true)
+          matrix_json='{"include": ['
+          first=true
+          for config in $configs; do
+            aaa=$(echo $config | cut -d';' -f1)
+            bbb=$(echo $config | cut -d';' -f2 | cut -d'.' -f1)
+            if [ ! -z "$aaa" ] && [ ! -z "$bbb" ]; then
+              if [ "$first" = false ]; then
+                matrix_json+=','
+              fi
+              matrix_json+='{"aaa": "'$aaa'", "bbb": "'$bbb'", "config": "'$config'"}'
+              first=false
+            fi
+          done
+          matrix_json+=']}'
+          echo "matrix=$matrix_json" >> $GITHUB_OUTPUT
+
+  build:
+    needs: generate-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
+      fail-fast: false
+    name: ${{ matrix.bbb }}_for_${{ matrix.aaa }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Maximize build space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+
+      - name: Setup cache for dl and ccache
+        uses: actions/cache@v4
+        with:
+          key: immortalwrt-cache-${{ runner.os }}-${{ hashFiles('**/*.config') }}
+          path: |
+            dl
+            ~/.ccache
+          restore-keys: immortalwrt-cache-${{ runner.os }}-
+
+      - name: Prepare build environment
+        run: sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+
+      - name: Clone ImmortalWrt repository
+        run: |
+          git clone https://github.com/immortalwrt/immortalwrt -b master
+          cd immortalwrt
+          ./scripts/feeds update -a
+
+      - name: Check and run diy.sh if exists
+        run: |
+          if [ -f ../diy.sh ]; then
+            cp ../diy.sh immortalwrt/
+            cd immortalwrt
+            bash diy.sh
+          else
+            cd immortalwrt
+          fi
+          ./scripts/feeds install -a
+
+      - name: Configure and build
+        run: |
+          cd immortalwrt
+          cp ../../${{ matrix.config }} .config
+          make defconfig
+          make download -j$(nproc)
+          make -j$(nproc) V=s
+
+      - name: Compress firmware
+        run: |
+          cd immortalwrt/bin/targets/*/*
+          firmware_file=$(ls immortalwrt*.bin | head -n1 || true)
+          if [ ! -z "$firmware_file" ]; then
+            zip -r ${{ matrix.bbb }}_for_${{ matrix.aaa }}.zip $firmware_file
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.bbb }}_for_${{ matrix.aaa }}
+          path: immortalwrt/bin/targets/*/*/*.zip
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: build-${{ github.run_id }}
+          release_name: Build ${{ github.run_id }}
+          draft: false
+          prerelease: false
+
+      - name: Upload Release Assets
+        run: |
+          for artifact_dir in ./artifacts/*; do
+            if [ -d "$artifact_dir" ]; then
+              zip_file=$(ls $artifact_dir/*.zip 2>/dev/null | head -n1 || true)
+              if [ ! -z "$zip_file" ]; then
+                gh release upload ${{ steps.create_release.outputs.id }} $zip_file
+              fi
+            fi
+          done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Delete old releases
+        uses: dev-drprasad/delete-older-releases@v0.3.4
+        with:
+          keep_latest: 5
+          delete_tags: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
