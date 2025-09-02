@@ -87,7 +87,7 @@ jobs:
       - name: Configure and build
         run: |
           cd immortalwrt
-          cp ../../${{ matrix.config }} .config
+          cp "../../${{ matrix.config }}" .config
           make defconfig
           make download -j$(nproc)
           make -j$(nproc) V=s
