@@ -87,7 +87,12 @@ jobs:
       - name: Configure and build
         run: |
           cd immortalwrt
-          cp "../../${{ matrix.config }}" .config
+          config_file="../../${{ matrix.config }}"
+          if [ ! -f "$config_file" ]; then
+            echo "Error: Config file $config_file not found"
+            exit 1
+          fi
+          cp "$config_file" .config
           make defconfig
           make download -j$(nproc)
           make -j$(nproc) V=s
@@ -98,13 +103,17 @@ jobs:
           firmware_file=$(ls immortalwrt*.bin | head -n1 || true)
           if [ ! -z "$firmware_file" ]; then
             zip -r ${{ matrix.bbb }}_for_${{ matrix.aaa }}.zip $firmware_file
+          else
+            echo "No firmware file found, skipping compression"
           fi
 
       - name: Upload artifact
+        if: success() || failure()
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.bbb }}_for_${{ matrix.aaa }}
           path: immortalwrt/bin/targets/*/*/*.zip
+          if-no-files-found: warn
 
   release:
     needs: build
