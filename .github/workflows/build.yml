@@ -202,8 +202,14 @@ jobs:
               fi
             done
           done
-          echo "success_artifacts=$SUCCESS_LIST" >> $GITHUB_OUTPUT
-          echo "fail_logs=$FAIL_LOGS" >> $GITHUB_OUTPUT
+
+          # 将换行和特殊字符转义为 GitHub 输出安全格式
+          safe_success=$(echo -e "$SUCCESS_LIST" | sed 's/%/%25/g; s/\n/%0A/g; s/\r/%0D/g')
+          safe_fail=$(echo -e "$FAIL_LOGS"    | sed 's/%/%25/g; s/\n/%0A/g; s/\r/%0D/g')
+
+          echo "success_artifacts=$safe_success" >> $GITHUB_OUTPUT
+          echo "fail_logs=$safe_fail" >> $GITHUB_OUTPUT
+
 
       - name: Create release with build status
         id: create_release
