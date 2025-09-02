@@ -37,90 +37,90 @@ jobs:
           matrix_json+=']}'
           echo "matrix=$matrix_json" >> $GITHUB_OUTPUT
 
-build:
-  needs: generate-matrix
-  runs-on: ubuntu-latest
-  strategy:
-    matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
-    fail-fast: false
-  name: ${{ matrix.bbb }}_for_${{ matrix.aaa }}
-  steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
-    - name: Maximize build space
-      run: |
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf /opt/ghc
-        sudo rm -rf "/usr/local/share/boost"
-        sudo rm -rf "$AGENT_TOOLSDIRECTORY"
-
-    - name: Setup cache for dl and ccache
-      uses: actions/cache@v4
-      with:
-        key: immortalwrt-cache-${{ runner.os }}-${{ hashFiles('**/*.config') }}
-        path: |
-          dl
-          ~/.ccache
-        restore-keys: immortalwrt-cache-${{ runner.os }}-
-
-    - name: Prepare build environment
-      run: sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
-
-    - name: Clone ImmortalWrt repository
-      run: |
-        git clone https://github.com/immortalwrt/immortalwrt -b master
-        cd immortalwrt
-        ./scripts/feeds update -a
-
-    - name: Check and run diy.sh if exists
-      run: |
-        if [ -f ../diy.sh ]; then
-          cp ../diy.sh immortalwrt/
+  build:
+    needs: generate-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
+      fail-fast: false
+    name: ${{ matrix.bbb }}_for_${{ matrix.aaa }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+  
+      - name: Maximize build space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+  
+      - name: Setup cache for dl and ccache
+        uses: actions/cache@v4
+        with:
+          key: immortalwrt-cache-${{ runner.os }}-${{ hashFiles('**/*.config') }}
+          path: |
+            dl
+            ~/.ccache
+          restore-keys: immortalwrt-cache-${{ runner.os }}-
+  
+      - name: Prepare build environment
+        run: sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+  
+      - name: Clone ImmortalWrt repository
+        run: |
+          git clone https://github.com/immortalwrt/immortalwrt -b master
           cd immortalwrt
-          bash diy.sh
-        else
+          ./scripts/feeds update -a
+  
+      - name: Check and run diy.sh if exists
+        run: |
+          if [ -f ../diy.sh ]; then
+            cp ../diy.sh immortalwrt/
+            cd immortalwrt
+            bash diy.sh
+          else
+            cd immortalwrt
+          fi
+          ./scripts/feeds install -a
+  
+      - name: Debug file listing
+        run: |
+          echo "Listing files in repository root:"
+          ls -la ../../
+          echo "Listing .config files:"
+          ls -la ../../*.config || true
+  
+      - name: Configure and build
+        run: |
           cd immortalwrt
-        fi
-        ./scripts/feeds install -a
-
-    - name: Debug file listing
-      run: |
-        echo "Listing files in repository root:"
-        ls -la ../../
-        echo "Listing .config files:"
-        ls -la ../../*.config || true
-
-    - name: Configure and build
-      run: |
-        cd immortalwrt
-        config_file="../../${{ matrix.config }}"
-        if [ ! -f "$config_file" ]; then
-          echo "Error: Config file $config_file not found"
-          exit 1
-        fi
-        cp "$config_file" .config
-        make defconfig
-        make download -j$(nproc)
-        make -j$(nproc) V=s
-
-    - name: Compress firmware
-      run: |
-        cd immortalwrt/bin/targets/*/*
-        firmware_file=$(ls immortalwrt*.bin | head -n1 || true)
-        if [ ! -z "$firmware_file" ]; then
-          zip -r ${{ matrix.bbb }}_for_${{ matrix.aaa }}.zip $firmware_file
-        else
-          echo "No firmware file found, skipping compression"
-        fi
-
-    - name: Upload artifact
-      if: success() || failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ matrix.bbb }}_for_${{ matrix.aaa }}
-        path: immortalwrt/bin/targets/*/*/*.zip
-        if-no-files-found: warn
+          config_file="../../${{ matrix.config }}"
+          if [ ! -f "$config_file" ]; then
+            echo "Error: Config file $config_file not found"
+            exit 1
+          fi
+          cp "$config_file" .config
+          make defconfig
+          make download -j$(nproc)
+          make -j$(nproc) V=s
+  
+      - name: Compress firmware
+        run: |
+          cd immortalwrt/bin/targets/*/*
+          firmware_file=$(ls immortalwrt*.bin | head -n1 || true)
+          if [ ! -z "$firmware_file" ]; then
+            zip -r ${{ matrix.bbb }}_for_${{ matrix.aaa }}.zip $firmware_file
+          else
+            echo "No firmware file found, skipping compression"
+          fi
+  
+      - name: Upload artifact
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.bbb }}_for_${{ matrix.aaa }}
+          path: immortalwrt/bin/targets/*/*/*.zip
+          if-no-files-found: warn
 
   release:
     needs: build
