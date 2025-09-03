@@ -81,16 +81,16 @@ jobs:
 
       - name: Copy config
         run: cp "${{ github.workspace }}/${{ matrix.file }}" openwrt/.config
-      - name: Copy diy.sh if exists
-        run: |
-          [ -f "${{ github.workspace }}/diy.sh" ] && cp "${{ github.workspace }}/diy.sh" openwrt/diy.sh
+      #- name: Copy diy.sh if exists
+      #  run: |
+      #    [ -f "${{ github.workspace }}/diy.sh" ] && cp "${{ github.workspace }}/diy.sh" openwrt/diy.sh
 
       - name: Update & install feeds
         working-directory: openwrt
         run: |
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          [ -f diy.sh ] && bash diy.sh
+       #   [ -f diy.sh ] && bash diy.sh
 
       - name: Build firmware
         working-directory: openwrt
