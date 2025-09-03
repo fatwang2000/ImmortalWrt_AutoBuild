@@ -48,13 +48,15 @@ jobs:
 
       - name: Prepare cache dirs
         run: |
-          mkdir -p .ccache
-          mkdir -p dl
+          mkdir -p openwrt/.ccache
+          mkdir -p openwrt/dl
+          mkdir -p openwrt/build_dir
+          mkdir -p openwrt/staging_dir
 
       - name: Restore ccache
         uses: actions/cache@v4
         with:
-          path: .ccache
+          path: openwrt/.ccache
           key: ccache-${{ matrix.owner }}-${{ matrix.type }}-${{ github.run_id }}
           restore-keys: |
             ccache-${{ matrix.owner }}-${{ matrix.type }}-
@@ -62,10 +64,26 @@ jobs:
       - name: Restore dl cache
         uses: actions/cache@v4
         with:
-          path: dl
-          key: dl-cache
+          path: openwrt/dl
+          key: dl-cache-${{ matrix.owner }}-${{ matrix.type }}-${{ github.run_id }}
           restore-keys: |
-            dl-cache
+            dl-cache-${{ matrix.owner }}-${{ matrix.type }}-
+
+      - name: Restore build_dir cache
+        uses: actions/cache@v4
+        with:
+          path: openwrt/build_dir
+          key: build-dir-cache-${{ matrix.owner }}-${{ matrix.type }}-${{ github.run_id }}
+          restore-keys: |
+            build-dir-cache-${{ matrix.owner }}-${{ matrix.type }}-
+
+      - name: Restore staging_dir cache
+        uses: actions/cache@v4
+        with:
+          path: openwrt/staging_dir
+          key: staging-dir-cache-${{ matrix.owner }}-${{ matrix.type }}-${{ github.run_id }}
+          restore-keys: |
+            staging-dir-cache-${{ matrix.owner }}-${{ matrix.type }}-
 
       - name: Prepare build environment
         run: |
@@ -75,12 +93,6 @@ jobs:
         run: |
           git clone --depth 1 -b master https://github.com/immortalwrt/immortalwrt.git openwrt
 
-      - name: Update & install feeds
-        working-directory: openwrt
-        run: |
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
-
       - name: Copy config
         run: |
           cp "${{ github.workspace }}/${{ matrix.file }}" openwrt/.config
@@ -89,10 +101,15 @@ jobs:
         run: |
           if [ -f "${{ github.workspace }}/diy.sh" ]; then
             cp "${{ github.workspace }}/diy.sh" openwrt/diy.sh
-            cd openwrt
-            [ -f diy.sh ] && bash diy.sh
           fi
-          
+
+      - name: Update & install feeds
+        working-directory: openwrt
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          [ -f diy.sh ] && bash diy.sh
+
       - name: Build (make)
         working-directory: openwrt
         run: |
