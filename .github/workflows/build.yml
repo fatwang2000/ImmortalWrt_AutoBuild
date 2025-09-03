@@ -1,4 +1,7 @@
-name: ImmortalWrt matrix build & release
+name: build
+
+env:
+  CACHE_KEEP: 3   # 每个缓存前缀保留数量，可调整
 
 on:
   schedule:
@@ -6,7 +9,7 @@ on:
   workflow_dispatch:        # 手动触发
   push:
     branches-ignore:
-      - "**"                # 禁止代码更新自动触发
+      - "**"               # 禁止代码更新自动触发
 
 jobs:
   discover:
@@ -15,12 +18,10 @@ jobs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
-
       - id: set-matrix
         run: |
           files=($(ls *.config || true))
           if [ ${#files[@]} -eq 0 ]; then
-            echo "No config files found!"
             echo "matrix={\"include\":[]}" >> $GITHUB_OUTPUT
             exit 0
           fi
@@ -32,7 +33,6 @@ jobs:
             matrix="${matrix}{\"file\":\"$f\",\"owner\":\"$owner\",\"type\":\"$type\"},"
           done
           matrix="${matrix%,}]}"
-          echo "matrix=$matrix"
           echo "matrix=$matrix" >> $GITHUB_OUTPUT
 
   build:
@@ -43,26 +43,47 @@ jobs:
       matrix: ${{ fromJson(needs.discover.outputs.matrix) }}
     name: Build ${{ matrix.type }} for ${{ matrix.owner }}
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Prepare build environment
-        run: |
-          sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
-
+        run: sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
       - name: Clone ImmortalWrt
-        run: |
-          git clone --depth 1 -b master https://github.com/immortalwrt/immortalwrt.git openwrt
+        run: git clone --depth 1 -b master https://github.com/immortalwrt/immortalwrt.git openwrt
+
+      # 恢复缓存
+      - uses: actions/cache@v4
+        with:
+          path: openwrt/.ccache
+          key: ccache-${{ matrix.owner }}-${{ matrix.type }}
+          restore-keys: |
+            ccache-${{ matrix.owner }}-${{ matrix.type }}
+            ccache-
+      - uses: actions/cache@v4
+        with:
+          path: openwrt/dl
+          key: dl-${{ matrix.owner }}-${{ matrix.type }}
+          restore-keys: |
+            dl-${{ matrix.owner }}-
+            dl-
+      - uses: actions/cache@v4
+        with:
+          path: openwrt/build_dir
+          key: builddir-${{ matrix.owner }}-${{ matrix.type }}
+          restore-keys: |
+            builddir-${{ matrix.owner }}-
+            builddir-
+      - uses: actions/cache@v4
+        with:
+          path: openwrt/staging_dir
+          key: stagingdir-${{ matrix.owner }}-${{ matrix.type }}
+          restore-keys: |
+            stagingdir-${{ matrix.owner }}-
+            stagingdir-
 
       - name: Copy config
-        run: |
-          cp "${{ github.workspace }}/${{ matrix.file }}" openwrt/.config
-
+        run: cp "${{ github.workspace }}/${{ matrix.file }}" openwrt/.config
       - name: Copy diy.sh if exists
         run: |
-          if [ -f "${{ github.workspace }}/diy.sh" ]; then
-            cp "${{ github.workspace }}/diy.sh" openwrt/diy.sh
-          fi
+          [ -f "${{ github.workspace }}/diy.sh" ] && cp "${{ github.workspace }}/diy.sh" openwrt/diy.sh
 
       - name: Update & install feeds
         working-directory: openwrt
@@ -71,41 +92,10 @@ jobs:
           ./scripts/feeds install -a
           [ -f diy.sh ] && bash diy.sh
 
-      - name: Prepare cache dirs
-        run: |
-          mkdir -p openwrt/.ccache
-          mkdir -p openwrt/dl
-          mkdir -p openwrt/build_dir
-          mkdir -p openwrt/staging_dir
-
-      - name: Restore ccache
-        uses: actions/cache@v4
-        with:
-          path: openwrt/.ccache
-          key: ccache-${{ matrix.owner }}-${{ matrix.type }}
-          restore-keys: |
-            ccache-${{ matrix.owner }}-${{ matrix.type }}
-
-      - name: Restore build_dir cache
-        uses: actions/cache@v4
-        with:
-          path: openwrt/build_dir
-          key: build-dir-cache-${{ matrix.owner }}-${{ matrix.type }}
-          restore-keys: |
-            build-dir-cache-${{ matrix.owner }}-${{ matrix.type }}
-
-      - name: Restore staging_dir cache
-        uses: actions/cache@v4
-        with:
-          path: openwrt/staging_dir
-          key: staging-dir-cache-${{ matrix.owner }}-${{ matrix.type }}
-          restore-keys: |
-            staging-dir-cache-${{ matrix.owner }}-${{ matrix.type }}
-
-      - name: Build (make)
+      - name: Build firmware
         working-directory: openwrt
         run: |
-          # make defconfig
+          make defconfig
           JOBS=$(nproc || echo 2)
           make -j${JOBS} || make -j1 V=s
 
@@ -126,18 +116,29 @@ jobs:
     needs: build
     runs-on: ubuntu-22.04
     steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           path: ./artifacts
-
-      - name: List artifacts
-        run: ls -lh ./artifacts
-
       - name: Get build datetime
         id: datetime
         run: |
-          echo "datetime=$(date +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_OUTPUT
+          TZ='Asia/Shanghai' date +'%Y-%m-%d_%H-%M-%S' > datetime.txt
+          echo "datetime=$(cat datetime.txt)" >> $GITHUB_OUTPUT
+
+      - name: Generate firmware list
+        id: fwlist
+        run: |
+          echo "firmware_list<<EOF" >> $GITHUB_OUTPUT
+          echo "| 文件名 | Owner | Type | 下载链接 |" >> $GITHUB_OUTPUT
+          echo "|--------|-------|------|----------|" >> $GITHUB_OUTPUT
+          for f in $(find ./artifacts -type f -name "*.zip"); do
+            fname=$(basename "$f")
+            type=$(echo "$fname" | cut -d'_' -f1)
+            owner=$(echo "$fname" | sed -E 's/.*_for_([^.]+).zip/\1/')
+            url="https://github.com/${{ github.repository }}/releases/download/固件编译于${{ steps.datetime.outputs.datetime }}/$fname"
+            echo "| $fname | $owner | $type | [下载]($url) |" >> $GITHUB_OUTPUT
+          done
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create release
         id: create_release
@@ -146,7 +147,19 @@ jobs:
           tag_name: "固件编译于${{ steps.datetime.outputs.datetime }}"
           name: "固件编译于 ${{ steps.datetime.outputs.datetime }}"
           files: ./artifacts/**/**/*.zip
-          body: "Auto firmware build at ${{ steps.datetime.outputs.datetime }}"
+          body: |
+            ![Build Date](https://img.shields.io/badge/编译日期-${{ steps.datetime.outputs.datetime }}-brightgreen)
+
+            本次自动编译时间：${{ steps.datetime.outputs.datetime }}
+
+            编译固件清单：
+            ${{ steps.fwlist.outputs.firmware_list }}
+
+            ---
+            🔗 源码仓库: [immortalwrt/immortalwrt](https://github.com/immortalwrt/immortalwrt)  
+            🌿 分支: master  
+
+            ℹ️ 本项目为自动编译仓库，每 2 天会使用 immortalwrt 最新源码进行一次固件编译，并自动发布 Release。
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
@@ -163,3 +176,29 @@ jobs:
             curl -s -X DELETE -H "Authorization: token ${GITHUB_TOKEN}" "https://api.github.com/repos/${REPO}/releases/${id}"
           done
 
+  cleanup-cache:
+    needs: release
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Clean old caches (keep ${{ env.CACHE_KEEP }} per key prefix)
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          REPO: ${{ github.repository }}
+          CACHE_KEEP: ${{ env.CACHE_KEEP }}
+        run: |
+          echo "Fetching cache list for $REPO"
+          caches=$(gh api -H "Accept: application/vnd.github+json" \
+            /repos/$REPO/actions/caches --paginate | jq -c '.actions_caches[]')
+
+          for prefix in ccache dl builddir stagingdir; do
+            echo "Processing prefix: $prefix"
+            sorted=$(echo "$caches" | jq -r --arg pre "$prefix" \
+              'select(.key | startswith($pre)) | [.created_at, .id] | @tsv' | sort)
+            count=$(echo "$sorted" | wc -l)
+            if [ "$count" -le "$CACHE_KEEP" ]; then
+              echo "Caches for $prefix = $count, within limit ($CACHE_KEEP), skip"
+              continue
+            fi
+            to_delete=$(echo "$sorted" | head -n -$CACHE_KEEP | awk '{print $2}')
+            for id in $to_delete; do
+             
