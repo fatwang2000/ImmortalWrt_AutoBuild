@@ -142,16 +142,21 @@ jobs:
       - name: List artifacts
         run: ls -lh ./artifacts
 
+      - name: Get build datetime
+        id: datetime
+        run: |
+          echo "datetime=$(date +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_OUTPUT
+
       - name: Create release
         id: create_release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: "Firmware build ${{ github.run_number }}"
+          tag_name: "固件编译于${{ steps.datetime.outputs.datetime }}"
+          name: "固件编译于 ${{ steps.datetime.outputs.datetime }}"
           files: ./artifacts/**/**/*.zip
-          body: "Auto firmware build"
+          body: "Auto firmware build at ${{ steps.datetime.outputs.datetime }}"
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}   # 使用 PAT，解决 403 问题
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
       - name: Cleanup old releases (keep 5)
         env:
@@ -165,3 +170,4 @@ jobs:
             echo "Deleting release id: $id"
             curl -s -X DELETE -H "Authorization: token ${GITHUB_TOKEN}" "https://api.github.com/repos/${REPO}/releases/${id}"
           done
+
