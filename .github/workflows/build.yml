@@ -82,33 +82,25 @@ jobs:
         uses: actions/cache@v4
         with:
           path: openwrt/.ccache
-          key: ccache-${{ matrix.owner }}-${{ matrix.type }}-${{ github.run_id }}
+          key: ccache-${{ matrix.owner }}-${{ matrix.type }}
           restore-keys: |
-            ccache-${{ matrix.owner }}-${{ matrix.type }}-
-
-      - name: Restore dl cache
-        uses: actions/cache@v4
-        with:
-          path: openwrt/dl
-          key: dl-cache-${{ matrix.owner }}-${{ matrix.type }}-${{ github.run_id }}
-          restore-keys: |
-            dl-cache-${{ matrix.owner }}-${{ matrix.type }}-
+            ccache-${{ matrix.owner }}-${{ matrix.type }}
 
       - name: Restore build_dir cache
         uses: actions/cache@v4
         with:
           path: openwrt/build_dir
-          key: build-dir-cache-${{ matrix.owner }}-${{ matrix.type }}-${{ github.run_id }}
+          key: build-dir-cache-${{ matrix.owner }}-${{ matrix.type }}
           restore-keys: |
-            build-dir-cache-${{ matrix.owner }}-${{ matrix.type }}-
+            build-dir-cache-${{ matrix.owner }}-${{ matrix.type }}
 
       - name: Restore staging_dir cache
         uses: actions/cache@v4
         with:
           path: openwrt/staging_dir
-          key: staging-dir-cache-${{ matrix.owner }}-${{ matrix.type }}-${{ github.run_id }}
+          key: staging-dir-cache-${{ matrix.owner }}-${{ matrix.type }}
           restore-keys: |
-            staging-dir-cache-${{ matrix.owner }}-${{ matrix.type }}-
+            staging-dir-cache-${{ matrix.owner }}-${{ matrix.type }}
 
       - name: Build (make)
         working-directory: openwrt
