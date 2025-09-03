@@ -47,7 +47,7 @@ jobs:
       - name: Prepare build environment
         run: sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
       - name: Clone ImmortalWrt
-        run: git clone --depth 1 -b master https://github.com/immortalwrt/immortalwrt.git openwrt
+        run: git clone --depth 1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
 
       # 恢复缓存
       - uses: actions/cache@v4
