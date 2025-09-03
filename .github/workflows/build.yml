@@ -1,14 +1,12 @@
 name: ImmortalWrt matrix build & release
 
-# 不在 push 时自动触发。仅 schedule（每 2 天）和手动触发。
 on:
   schedule:
-    # 每 2 天运行一次（UTC 零点），你可以调整 cron 时间
-    - cron: '0 0 */2 * *'
+    - cron: '0 0 */2 * *'   # 每 2 天运行一次（UTC 零点）
   workflow_dispatch: {}
 
 permissions:
-  contents: write    # 创建 release / 上传资产需要写权限
+  contents: write
   packages: write
   id-token: write
 
@@ -23,7 +21,7 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - name: Checkout repo (to read .config files)
+      - name: Checkout repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
@@ -31,61 +29,46 @@ jobs:
       - name: Find config files and build matrix JSON
         id: set-matrix
         run: |
-          # find files matching pattern "*;*.config" or any *.config
           configs=()
           while IFS= read -r -d $'\0' file; do
             configs+=("$file")
           done < <(find . -maxdepth 1 -type f -name "*.config" -print0)
 
           if [ ${#configs[@]} -eq 0 ]; then
-            echo "No .config files found in repo root. Exiting with failure."
-            # set empty matrix to fail early
-            printf '{"matrix": []}' > matrix.json
-            echo "matrix=$(cat matrix.json)" >> $GITHUB_OUTPUT
+            echo "No .config files found."
+            echo 'matrix=[]' >> $GITHUB_OUTPUT
             exit 1
           fi
 
-          # Build JSON array for matrix
           arr="["
           first=true
           for f in "${configs[@]}"; do
             fname=$(basename "$f")
-            # Expect format owner;type.config — allow semicolon separator.
-            # Remove trailing .config for parsing owner and type
             base="${fname%.config}"
-            # Split at first semicolon
             owner="${base%%;*}"
             type="${base#*;}"
-            # If no semicolon present, treat owner as 'unknown' and type as base
             if [ "$owner" = "$base" ]; then
               owner="unknown"
               type="$base"
             fi
-            # sanitize a name for artifact/tag: type_for_owner (replace spaces with _)
             safe_owner=$(echo "$owner" | tr ' ' '_' | tr -cd '[:alnum:]_.-')
             safe_type=$(echo "$type" | tr ' ' '_' | tr -cd '[:alnum:]_.-')
             matrix_name="${safe_type}_for_${safe_owner}"
-            # Add object
             if [ "$first" = true ]; then
               first=false
             else
               arr="${arr},"
             fi
-            # include original config file name so build job can copy it
             arr="${arr}{\"owner\":\"${owner}\",\"type\":\"${type}\",\"config\":\"${fname}\",\"name\":\"${matrix_name}\"}"
           done
           arr="${arr}]"
-          # output as matrix JSON
           echo "matrix=${arr}" >> $GITHUB_OUTPUT
-          # Also print for logs
           echo "Prepared matrix: ${arr}"
 
   build:
-    # make sure this job runs even if prepare failed? need prepare success
     name: Build matrix
     needs: prepare
     runs-on: ubuntu-latest
-    # If one matrix entry fails, we want other matrix entries to continue and final job to run.
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -94,119 +77,83 @@ jobs:
       IMMORTALWRT_REPO: https://github.com/immortalwrt/immortalwrt.git
       IMMORTALWRT_BRANCH: master
       CCACHE_DIR: ${{ github.workspace }}/.ccache
-      # Set number of parallel jobs to number of processors
-      PARALLEL_JOBS: ${{ runner.parallel }}
     steps:
-      - name: Checkout repo (configs & diy.sh)
+      - name: Checkout repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: Setup caches - ccache
+      - name: Cache ccache
         uses: actions/cache@v4
         with:
-          path: |
-            ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-${{ hashFiles('**/*.config') }}-${{ github.ref }}
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-${{ hashFiles('**/*.config') }}
           restore-keys: |
             ccache-${{ runner.os }}-
 
-      - name: Setup caches - dl (immortalwrt dl directory)
-        # use a dedicated cache keyed to config list and branch
+      - name: Cache dl
         uses: actions/cache@v4
         with:
-          path: |
-            ${{ github.workspace }}/immortalwrt/dl
-          key: dl-${{ runner.os }}-${{ hashFiles('**/*.config') }}-${{ github.ref }}
+          path: ${{ github.workspace }}/immortalwrt/dl
+          key: dl-${{ runner.os }}-${{ hashFiles('**/*.config') }}
           restore-keys: |
             dl-${{ runner.os }}-
 
-      - name: Clone ImmortalWrt (master)
+      - name: Clone ImmortalWrt
         run: |
           git clone --depth 1 -b ${IMMORTALWRT_BRANCH} ${IMMORTALWRT_REPO} immortalwrt
 
       - name: Show matrix entry
         run: |
           echo "Building config: ${{ matrix.config }} (name: ${{ matrix.name }})"
-          echo "owner=${{ matrix.owner }} type=${{ matrix.type }}"
 
-      - name: Prepare build environment (init script)
+      - name: Prepare build environment
         run: |
-          set -eux
           cd immortalwrt
-          # run the provided init script as requested
           sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
 
-      - name: Copy .config into immortalwrt and enable ccache env
+      - name: Copy config & setup ccache
         run: |
-          set -eux
-          # copy the config from repo root into immortalwrt/.config
-          cp "../${{ matrix.config }}" ./immortalwrt/.config
-          ls -l ./immortalwrt/.config || true
-          # ensure ccache dir exists
+          cp "${{ matrix.config }}" immortalwrt/.config
           mkdir -p "${CCACHE_DIR}"
-          export CCACHE_DIR="${CCACHE_DIR}"
-          echo "CCACHE_DIR=${CCACHE_DIR}"
 
-      - name: feeds update & install, then optional diy.sh
+      - name: Feeds & diy.sh
         working-directory: immortalwrt
         run: |
-          set -eux
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          # If diy.sh exists in repo root, copy and run it here (as requested)
           if [ -f ../diy.sh ]; then
             cp ../diy.sh ./
-            chmod +x ./diy.sh
-            echo "Running diy.sh..."
+            chmod +x diy.sh
             ./diy.sh
-          else
-            echo "No diy.sh found in repo root; skipping."
           fi
 
-      - name: Build (make)
+      - name: Build
         working-directory: immortalwrt
         env:
           CCACHE_DIR: ${{ env.CCACHE_DIR }}
           USE_CCACHE: '1'
         run: |
-          set -eux
-          # show ccache stats before/after for logs
-          command -v ccache && ccache -s || true
-          # determine job count
+          ccache -s || true
           JOBS=$(nproc || echo 2)
-          echo "Starting make -j${JOBS}"
-          # Build - keeping V=s would be noisy; you can set V=s in config if needed
           make -j${JOBS} || true
-          command -v ccache && ccache -s || true
+          ccache -s || true
 
-      - name: Collect artifacts and zip single package per config
+      - name: Collect artifacts
         working-directory: immortalwrt
         run: |
-          set -eux
           outdir="${GITHUB_WORKSPACE}/artifacts"
           mkdir -p "$outdir"
-          TAG_NAME="${{ matrix.name }}-run${{ github.run_id }}"
-          # find generated firmware files under bin/ (targets)
-          # collect typical patterns: bin/targets/**/*-{factory,img,squashfs-sysupgrade,bin.gz,*.ipk,*.tar.gz}
-          FILES=$(find bin -type f \( -name "*.bin" -o -name "*.img" -o -name "*sysupgrade*" -o -name "*.tar.gz" -o -name "*.zip" -o -name "*.gz" -o -name "*-factory-*.bin" \) -print || true)
+          FILES=$(find bin -type f \( -name "*.bin" -o -name "*.img" -o -name "*sysupgrade*" -o -name "*.tar.gz" -o -name "*.zip" -o -name "*.gz" \) -print || true)
           if [ -z "$FILES" ]; then
-            echo "No firmware files found for config ${{ matrix.config }}. Will still upload logs if present."
-            # create an empty marker so caller knows build finished but no firmware
-            touch "$outdir/${{ matrix.name }}-NO-FIRMWARE.txt"
-            echo "No firmware produced for config ${{ matrix.config }}" > "$outdir/${{ matrix.name }}-NO-FIRMWARE.txt"
+            echo "No firmware built."
+            echo "No firmware produced" > "$outdir/${{ matrix.name }}-NO-FIRMWARE.txt"
           else
-            # create a zip of the found files
             zipfile="$outdir/${{ matrix.name }}.zip"
-            # Ensure unique zip name
-            rm -f "$zipfile"
-            # Add files to zip preserving directory structure
             zip -r "$zipfile" $FILES
-            echo "Created $zipfile containing:"
-            ls -l "$zipfile"
           fi
 
-      - name: Upload artifact (per-config zip or marker)
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
@@ -214,87 +161,39 @@ jobs:
           retention-days: 7
 
   release:
-    name: Create release and upload artifacts
+    name: Create release
     needs: build
     runs-on: ubuntu-latest
-    if: always()   # run even if some build matrix entries failed (build job has continue-on-error)
+    if: always()
     steps:
-      - name: Checkout (to access scripts if needed)
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download all build artifacts into ./artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: ./artifacts
 
-      - name: List downloaded artifacts
-        run: |
-          echo "Files in ./artifacts:"
-          ls -lh ./artifacts || true
+      - name: List artifacts
+        run: ls -lh ./artifacts
 
-      - name: Create GitHub release for this workflow run
+      - name: Create release
         id: create_release
         uses: actions/create-release@v1
         with:
           tag_name: build-${{ github.run_id }}
           release_name: ImmortalWrt builds - run ${{ github.run_id }}
-          body: |
-            Artifacts from workflow run ${{ github.run_id }}.
-            Matrix builds attempted from configs: ${{ needs.prepare.outputs.matrix }}
+          body: Artifacts from run ${{ github.run_id }}
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload each artifact to the release
+      - name: Upload assets
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -eux
-          release_id=${{ steps.create_release.outputs.id }}
           upload_url=${{ steps.create_release.outputs.upload_url }}
-          echo "Release id: $release_id"
-          # iterate files in ./artifacts
           for f in ./artifacts/*; do
             [ -e "$f" ] || continue
             filename=$(basename "$f")
-            echo "Uploading $filename ..."
-            # Use curl to upload asset (requires proper Content-Type)
-            # Get upload URL (replace {?name,label})
-            url="${upload_url}?name=$(jq -rn --arg v "$filename" '$v|@uri')"
-            curl -sS -X POST \
-              -H "Authorization: token $GITHUB_TOKEN" \
-              -H "Content-Type: application/octet-stream" \
-              --data-binary @"$f" "$url"
-          done
-
-      - name: Cleanup old releases (keep latest 5)
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -eux
-          # list releases sorted by created_at desc
-          api="https://api.github.com/repos/${REPO}/releases"
-          # get release ids and tags
-          releases_json=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" "${api}")
-          # we want to keep newest 5 by created_at; delete older ones
-          ids_to_delete=$(echo "$releases_json" | jq -r 'sort_by(.created_at) | .[0:-5] | .[]?.id' )
-          # if none, exit
-          if [ -z "$ids_to_delete" ]; then
-            echo "No old releases to delete (<=5 present)."
-            exit 0
-          fi
-          for id in $ids_to_delete; do
-            echo "Deleting release id $id ..."
-            curl -s -X DELETE -H "Authorization: token ${GITHUB_TOKEN}" "https://api.github.com/repos/${REPO}/releases/${id}"
-            # Also try deleting corresponding tag if exists
-            tag_name=$(echo "$releases_json" | jq -r ".[] | select(.id==${id}) | .tag_name")
-            if [ "$tag_name" != "null" ] && [ -n "$tag_name" ]; then
-              echo "Deleting tag refs/tags/$tag_name if present"
-              curl -s -X DELETE -H "Authorization: token ${GITHUB_TOKEN}" "https://api.github.com/repos/${REPO}/git/refs/tags/${tag_name}" || true
-            fi
-          done
-
-      - name: Final message
-        run: echo "Release step finished. Artifacts uploaded. Old releases pruned to last 5."
