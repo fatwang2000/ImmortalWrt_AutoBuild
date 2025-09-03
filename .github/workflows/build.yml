@@ -75,6 +75,12 @@ jobs:
         run: |
           git clone --depth 1 -b master https://github.com/immortalwrt/immortalwrt.git openwrt
 
+      - name: Update & install feeds
+        working-directory: openwrt
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
       - name: Copy config
         run: |
           cp "${{ github.workspace }}/${{ matrix.file }}" openwrt/.config
@@ -83,15 +89,10 @@ jobs:
         run: |
           if [ -f "${{ github.workspace }}/diy.sh" ]; then
             cp "${{ github.workspace }}/diy.sh" openwrt/diy.sh
+            cd openwrt
+            [ -f diy.sh ] && bash diy.sh
           fi
-
-      - name: Update & install feeds
-        working-directory: openwrt
-        run: |
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
-          [ -f diy.sh ] && bash diy.sh
-
+          
       - name: Build (make)
         working-directory: openwrt
         run: |
