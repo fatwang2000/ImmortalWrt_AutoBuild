@@ -46,6 +46,31 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      - name: Prepare build environment
+        run: |
+          sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+
+      - name: Clone ImmortalWrt
+        run: |
+          git clone --depth 1 -b master https://github.com/immortalwrt/immortalwrt.git openwrt
+
+      - name: Copy config
+        run: |
+          cp "${{ github.workspace }}/${{ matrix.file }}" openwrt/.config
+
+      - name: Copy diy.sh if exists
+        run: |
+          if [ -f "${{ github.workspace }}/diy.sh" ]; then
+            cp "${{ github.workspace }}/diy.sh" openwrt/diy.sh
+          fi
+
+      - name: Update & install feeds
+        working-directory: openwrt
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          [ -f diy.sh ] && bash diy.sh
+
       - name: Prepare cache dirs
         run: |
           mkdir -p openwrt/.ccache
@@ -84,31 +109,6 @@ jobs:
           key: staging-dir-cache-${{ matrix.owner }}-${{ matrix.type }}-${{ github.run_id }}
           restore-keys: |
             staging-dir-cache-${{ matrix.owner }}-${{ matrix.type }}-
-
-      - name: Prepare build environment
-        run: |
-          sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
-
-      - name: Clone ImmortalWrt
-        run: |
-          git clone --depth 1 -b master https://github.com/immortalwrt/immortalwrt.git openwrt
-
-      - name: Copy config
-        run: |
-          cp "${{ github.workspace }}/${{ matrix.file }}" openwrt/.config
-
-      - name: Copy diy.sh if exists
-        run: |
-          if [ -f "${{ github.workspace }}/diy.sh" ]; then
-            cp "${{ github.workspace }}/diy.sh" openwrt/diy.sh
-          fi
-
-      - name: Update & install feeds
-        working-directory: openwrt
-        run: |
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
-          [ -f diy.sh ] && bash diy.sh
 
       - name: Build (make)
         working-directory: openwrt
