@@ -2,198 +2,113 @@ name: ImmortalWrt matrix build & release
 
 on:
   schedule:
-    - cron: '0 0 */2 * *'   # 每 2 天运行一次（UTC 零点）
-  workflow_dispatch: {}
-
-permissions:
-  contents: write
-  packages: write
-  id-token: write
-
-concurrency:
-  group: immortalwrt-build-${{ github.ref }}
-  cancel-in-progress: false
+    - cron: "0 0 */2 * *"   # 每两天运行一次
+  workflow_dispatch:        # 手动触发
+  push:
+    branches-ignore:
+      - "**"                # 禁止代码更新自动触发
 
 jobs:
-  prepare:
-    name: Prepare matrix
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Find config files and build matrix JSON
-        id: set-matrix
-        run: |
-          configs=()
-          while IFS= read -r -d $'\0' file; do
-            configs+=("$file")
-          done < <(find . -maxdepth 1 -type f -name "*.config" -print0)
-
-          if [ ${#configs[@]} -eq 0 ]; then
-            echo "No .config files found."
-            echo 'matrix=[]' >> $GITHUB_OUTPUT
-            exit 1
-          fi
-
-          arr="["
-          first=true
-          for f in "${configs[@]}"; do
-            fname=$(basename "$f")
-            base="${fname%.config}"
-            owner="${base%%;*}"
-            type="${base#*;}"
-            if [ "$owner" = "$base" ]; then
-              owner="unknown"
-              type="$base"
-            fi
-            safe_owner=$(echo "$owner" | tr ' ' '_' | tr -cd '[:alnum:]_.-')
-            safe_type=$(echo "$type" | tr ' ' '_' | tr -cd '[:alnum:]_.-')
-            matrix_name="${safe_type}_for_${safe_owner}"
-            if [ "$first" = true ]; then
-              first=false
-            else
-              arr="${arr},"
-            fi
-            arr="${arr}{\"owner\":\"${owner}\",\"type\":\"${type}\",\"config\":\"${fname}\",\"name\":\"${matrix_name}\"}"
-          done
-          arr="${arr}]"
-          echo "matrix=${arr}" >> $GITHUB_OUTPUT
-          echo "Prepared matrix: ${arr}"
-
   build:
-    name: Build matrix
-    needs: prepare
-    runs-on: ubuntu-latest
-    continue-on-error: true
+    name: Build ${{ matrix.config }}
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
-    env:
-      IMMORTALWRT_REPO: https://github.com/immortalwrt/immortalwrt.git
-      IMMORTALWRT_BRANCH: master
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      matrix:
+        config:
+          - owner1;type1.config
+          - owner2;type2.config
+          - owner3;type3.config
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
-      - name: Cache ccache
+      - name: Restore ccache
         uses: actions/cache@v4
         with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-${{ hashFiles('**/*.config') }}
+          path: .ccache
+          key: ccache-${{ matrix.config }}-${{ github.run_id }}
           restore-keys: |
-            ccache-${{ runner.os }}-
+            ccache-${{ matrix.config }}-
 
-      - name: Cache dl
+      - name: Restore dl cache
         uses: actions/cache@v4
         with:
-          path: ${{ github.workspace }}/immortalwrt/dl
-          key: dl-${{ runner.os }}-${{ hashFiles('**/*.config') }}
+          path: dl
+          key: dl-cache
           restore-keys: |
-            dl-${{ runner.os }}-
-
-      - name: Clone ImmortalWrt
-        run: |
-          git clone --depth 1 -b ${IMMORTALWRT_BRANCH} ${IMMORTALWRT_REPO} immortalwrt
-
-      - name: Show matrix entry
-        run: |
-          echo "Building config: ${{ matrix.config }} (name: ${{ matrix.name }})"
+            dl-cache
 
       - name: Prepare build environment
         run: |
-          cd immortalwrt
           sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
 
-      - name: Copy config & setup ccache
+      - name: Clone ImmortalWrt
         run: |
-          cp "${{ matrix.config }}" immortalwrt/.config
-          mkdir -p "${CCACHE_DIR}"
+          git clone --depth 1 -b master https://github.com/immortalwrt/immortalwrt.git openwrt
 
-      - name: Feeds & diy.sh
-        working-directory: immortalwrt
+      - name: Copy config
+        run: |
+          cp "${{ github.workspace }}/${{ matrix.config }}" openwrt/.config
+
+      - name: Copy diy.sh if exists
+        run: |
+          if [ -f "${{ github.workspace }}/diy.sh" ]; then
+            cp "${{ github.workspace }}/diy.sh" openwrt/diy.sh
+          fi
+
+      - name: Update & install feeds
+        working-directory: openwrt
         run: |
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          if [ -f ../diy.sh ]; then
-            cp ../diy.sh ./
-            chmod +x diy.sh
-            ./diy.sh
-          fi
+          [ -f diy.sh ] && bash diy.sh
 
-      - name: Build
-        working-directory: immortalwrt
-        env:
-          CCACHE_DIR: ${{ env.CCACHE_DIR }}
-          USE_CCACHE: '1'
+      - name: Build (make)
+        working-directory: openwrt
         run: |
-          ccache -s || true
+          make defconfig
           JOBS=$(nproc || echo 2)
-          make -j${JOBS} || true
-          ccache -s || true
+          make -j${JOBS} || make -j1 V=s
 
-      - name: Collect artifacts
-        working-directory: immortalwrt
+      - name: Package firmware
+        working-directory: openwrt
         run: |
-          outdir="${GITHUB_WORKSPACE}/artifacts"
-          mkdir -p "$outdir"
-          FILES=$(find bin -type f \( -name "*.bin" -o -name "*.img" -o -name "*sysupgrade*" -o -name "*.tar.gz" -o -name "*.zip" -o -name "*.gz" \) -print || true)
-          if [ -z "$FILES" ]; then
-            echo "No firmware built."
-            echo "No firmware produced" > "$outdir/${{ matrix.name }}-NO-FIRMWARE.txt"
-          else
-            zipfile="$outdir/${{ matrix.name }}.zip"
-            zip -r "$zipfile" $FILES
-          fi
+          mkdir -p ../firmware
+          fname=$(basename "${{ matrix.config }}" .config)
+          job_name="${fname//;/_}"   # 替换分号为下划线
+          zip -r9 ../firmware/${job_name}.zip bin/targets/
 
-      - name: Upload artifact
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.name }}
-          path: artifacts/
-          retention-days: 7
+          name: firmware_${{ matrix.config }}
+          path: firmware/*.zip
 
   release:
-    name: Create release
     needs: build
-    runs-on: ubuntu-latest
-    if: always()
+    runs-on: ubuntu-22.04
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: ./artifacts
 
-      - name: List artifacts
-        run: ls -lh ./artifacts
-
       - name: Create release
-        id: create_release
-        uses: actions/create-release@v1
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_id }}
-          release_name: ImmortalWrt builds - run ${{ github.run_id }}
-          body: Artifacts from run ${{ github.run_id }}
-          draft: false
-          prerelease: false
+          tag_name: build-${{ github.run_number }}
+          name: "Firmware build ${{ github.run_number }}"
+          files: ./artifacts/**/**/*.zip
+          body: "Auto firmware build"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload assets
+      - name: Prune old releases
+        uses: dev-drprasad/delete-older-releases@v0.3.3
+        with:
+          keep_latest: 5
+          delete_tags: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          upload_url=${{ steps.create_release.outputs.upload_url }}
-          for f in ./artifacts/*; do
-            [ -e "$f" ] || continue
-            filename=$(basename "$f")
