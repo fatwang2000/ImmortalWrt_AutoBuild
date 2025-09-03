@@ -19,14 +19,14 @@ jobs:
       - id: set-matrix
         run: |
           files=($(ls *.config))
-          matrix="["
+          matrix="{\"include\":["
           for f in "${files[@]}"; do
             base="${f%.config}"
             owner="${base%%;*}"
             type="${base##*;}"
             matrix="${matrix}{\"file\":\"$f\",\"owner\":\"$owner\",\"type\":\"$type\"},"
           done
-          matrix="${matrix%,}]"
+          matrix="${matrix%,}]}"
           echo "matrix=$matrix"
           echo "matrix=$matrix" >> $GITHUB_OUTPUT
 
