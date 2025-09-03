@@ -9,16 +9,35 @@ on:
       - "**"                # 禁止代码更新自动触发
 
 jobs:
+  discover:
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: set-matrix
+        run: |
+          files=($(ls *.config))
+          matrix="["
+          for f in "${files[@]}"; do
+            base="${f%.config}"
+            owner="${base%%;*}"
+            type="${base##*;}"
+            matrix="${matrix}{\"file\":\"$f\",\"owner\":\"$owner\",\"type\":\"$type\"},"
+          done
+          matrix="${matrix%,}]"
+          echo "matrix=$matrix"
+          echo "matrix=$matrix" >> $GITHUB_OUTPUT
+
   build:
-    name: Build ${{ matrix.config }}
+    needs: discover
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
-      matrix:
-        config:
-          - owner1;type1.config
-          - owner2;type2.config
-          - owner3;type3.config
+      matrix: ${{ fromJson(needs.discover.outputs.matrix) }}
+
+    name: Build ${{ matrix.type }} for ${{ matrix.owner }}
 
     steps:
       - name: Checkout repo
@@ -28,9 +47,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .ccache
-          key: ccache-${{ matrix.config }}-${{ github.run_id }}
+          key: ccache-${{ matrix.owner }}-${{ matrix.type }}-${{ github.run_id }}
           restore-keys: |
-            ccache-${{ matrix.config }}-
+            ccache-${{ matrix.owner }}-${{ matrix.type }}-
 
       - name: Restore dl cache
         uses: actions/cache@v4
@@ -50,7 +69,7 @@ jobs:
 
       - name: Copy config
         run: |
-          cp "${{ github.workspace }}/${{ matrix.config }}" openwrt/.config
+          cp "${{ github.workspace }}/${{ matrix.file }}" openwrt/.config
 
       - name: Copy diy.sh if exists
         run: |
@@ -76,14 +95,13 @@ jobs:
         working-directory: openwrt
         run: |
           mkdir -p ../firmware
-          fname=$(basename "${{ matrix.config }}" .config)
-          job_name="${fname//;/_}"   # 替换分号为下划线
-          zip -r9 ../firmware/${job_name}.zip bin/targets/
+          zipname="${{ matrix.type }}_for_${{ matrix.owner }}.zip"
+          zip -r9 ../firmware/$zipname bin/targets/
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: firmware_${{ matrix.config }}
+          name: firmware_${{ matrix.owner }}_${{ matrix.type }}
           path: firmware/*.zip
 
   release:
