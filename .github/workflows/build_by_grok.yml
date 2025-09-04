@@ -41,16 +41,13 @@ jobs:
 
   build:
     needs: discover
-    if: ${{ needs.discover.outputs.matrix != '{"include": []}' }}
+    if: ${{ needs.discover.outputs.matrix != '' }}  # Fixed line
     runs-on: ubuntu-latest
     strategy:
       matrix: ${{ fromJson(needs.discover.outputs.matrix) }}
       fail-fast: false
     name: ${{ matrix.type }}_for_${{ matrix.owner }}
     steps:
-      - name: Debug matrix output
-        run: echo "${{ needs.discover.outputs.matrix }}"
-
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -66,9 +63,13 @@ jobs:
 
       - name: Run diy.sh if exists
         run: |
-          if [ -f ../diy.sh ]; then cp ../diy.sh openwrt/diy.sh && cd openwrt && bash diy.sh; fi
+          if [ -f ../diy.sh ]; then
+            cp ../diy.sh openwrt/diy.sh
+            cd openwrt
+            bash diy.sh
+          fi
 
-      # ... (rest of the steps remain unchanged)
+      # ... (rest of the build job steps remain unchanged)
       
       - name: Prepare config
         run: |
