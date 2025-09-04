@@ -41,7 +41,7 @@ jobs:
 
   build:
     needs: discover
-    if: ${{ needs.discover.outputs.matrix != '' }}  # Fixed line
+    if: ${{ needs.discover.outputs.matrix != '' }}
     runs-on: ubuntu-latest
     strategy:
       matrix: ${{ fromJson(needs.discover.outputs.matrix) }}
@@ -63,20 +63,15 @@ jobs:
 
       - name: Run diy.sh if exists
         run: |
-          ls -l
-          if [ -f ../diy.sh ]; then
-            cp ../diy.sh openwrt/diy.sh
+          if [ -f diy.sh ]; then
+            cp diy.sh openwrt/diy.sh
             cd openwrt
             bash diy.sh
           fi
 
-      # ... (rest of the build job steps remain unchanged)
-      
       - name: Prepare config
         run: |
-          ls -l
-          pwd
-          cp "../${{ matrix.owner }};${{ matrix.type }}.config" openwrt/.config
+          cp "${{ matrix.owner }};${{ matrix.type }}.config" openwrt/.config
           cd openwrt
           yes "" | make oldconfig
 
