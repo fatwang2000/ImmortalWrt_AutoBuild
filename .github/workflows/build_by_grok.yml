@@ -1,0 +1,166 @@
+name: build by grok
+
+on:
+  schedule:
+    - cron: '0 0 */2 * *'  # Every 2 days at 00:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  IMMORTALWRT_REPO: https://github.com/immortalwrt/immortalwrt
+  IMMORTALWRT_BRANCH: openwrt-24.10
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.generate-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate matrix
+        id: generate-matrix
+        run: |
+          configs=$(ls *.config 2>/dev/null || true)
+          matrix_json='{"include": []}'
+          if [ -n "$configs" ]; then
+            matrix_include=()
+            for config in $configs; do
+              owner_type="${config%.config}"
+              owner="${owner_type%%;*}"
+              type="${owner_type#*;}"
+              matrix_include+=("{\"owner\": \"$owner\", \"type\": \"$type\", \"job_name\": \"${type}_for_${owner}\"}")
+            done
+            matrix_include_str=$(IFS=,; echo "${matrix_include[*]}")
+            matrix_json="{\"include\": [$matrix_include_str]}"
+          fi
+          echo "matrix=$matrix_json" >> $GITHUB_OUTPUT
+
+  build:
+    needs: discover
+    if: ${{ needs.discover.outputs.matrix != '{"include": []}' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJson(needs.discover.outputs.matrix) }}
+      fail-fast: false
+    name: ${{ matrix.type }}_for_${{ matrix.owner }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup build environment
+        run: sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+
+      - name: Clone ImmortalWRT
+        run: |
+          git clone --depth 1 -b $IMMORTALWRT_BRANCH $IMMORTALWRT_REPO openwrt
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Run diy.sh if exists
+        run: |
+          if [ -f ../diy.sh ]; then
+            cp ../diy.sh openwrt/diy.sh
+            cd openwrt
+            bash diy.sh
+          fi
+
+      - name: Prepare config
+        run: |
+          cp "../${{ matrix.owner }};${{ matrix.type }}.config" openwrt/.config
+          cd openwrt
+          yes "" | make oldconfig
+
+      - name: Download packages
+        run: |
+          cd openwrt
+          make -j$(nproc) download V=s
+
+      - name: Build firmware
+        run: |
+          cd openwrt
+          make -j$(nproc) V=s
+
+      - name: Package firmware
+        run: |
+          cd openwrt/bin/targets
+          artifact_name="${{ matrix.type }}_for_${{ matrix.owner }}.zip"
+          zip -r "../../../$artifact_name" .
+          cd ../../..
+          mv "$artifact_name" .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.type }}_for_${{ matrix.owner }}
+          path: "*.zip"
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Prepare artifacts
+        run: |
+          mkdir -p artifacts_flat
+          find ./artifacts -type f -name "*.zip" -exec mv {} artifacts_flat/ \;
+
+      - name: Install GitHub CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gh
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          TAG="固件编译于$(date +%Y-%m-%d_%H-%M-%S)"
+          gh release create "$TAG" --title "$TAG" --notes "Placeholder body"
+
+          # Upload assets
+          asset_files=$(ls artifacts_flat/*.zip)
+          for file in $asset_files; do
+            gh release upload "$TAG" "$file"
+          done
+
+          # Build body
+          compile_date=$(date +%Y-%m-%d)
+          badge="![Compile Date](https://img.shields.io/badge/Compile%20Date-${compile_date//-/%2D}-blue)"
+          
+          firmware_list=""
+          for file in $asset_files; do
+            filename=$(basename "$file")
+            owner_type="${filename%.zip}"
+            owner="${owner_type#*_for_}"  # Note: job_name is type_for_owner, so reverse
+            type="${owner_type%%_for_*}"
+            asset_url=$(gh release view "$TAG" --json assets -q ".assets[] | select(.name == \"$filename\") | .url")
+            firmware_list="$firmware_list\n- **$owner / $type**: [Download]($asset_url)"
+          done
+          
+          repo_info="ImmortalWRT Repository: $IMMORTALWRT_REPO\nBranch: $IMMORTALWRT_BRANCH"
+          
+          auto_build="自动编译说明：本项目每隔2天用最新源码进行编译"
+          
+          body="$badge\n\n编译固件清单：$firmware_list\n\n$repo_info\n\n$auto_build"
+          
+          gh release edit "$TAG" --notes "$body"
+
+      - name: Delete old releases
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          releases=$(gh api repos/{owner}/{repo}/releases --paginate | jq -r 'sort_by(.created_at) | reverse | .[].tag_name' | tail -n +6)
+          for tag in $releases; do
+            gh release delete "$tag" --yes
+          done
