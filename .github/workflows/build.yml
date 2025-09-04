@@ -50,34 +50,34 @@ jobs:
         run: git clone --depth 1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
 
       # 恢复缓存
-      - uses: actions/cache@v4
-        with:
-          path: openwrt/.ccache
-          key: ccache-${{ matrix.owner }}-${{ matrix.type }}
-          restore-keys: |
-            ccache-${{ matrix.owner }}-${{ matrix.type }}
-            ccache-
-      - uses: actions/cache@v4
-        with:
-          path: openwrt/dl
-          key: dl-${{ matrix.owner }}-${{ matrix.type }}
-          restore-keys: |
-            dl-${{ matrix.owner }}-
-            dl-
-      - uses: actions/cache@v4
-        with:
-          path: openwrt/build_dir
-          key: builddir-${{ matrix.owner }}-${{ matrix.type }}
-          restore-keys: |
-            builddir-${{ matrix.owner }}-
-            builddir-
-      - uses: actions/cache@v4
-        with:
-          path: openwrt/staging_dir
-          key: stagingdir-${{ matrix.owner }}-${{ matrix.type }}
-          restore-keys: |
-            stagingdir-${{ matrix.owner }}-
-            stagingdir-
+      #- uses: actions/cache@v4
+      #  with:
+      #    path: openwrt/.ccache
+      #    key: ccache-${{ matrix.owner }}-${{ matrix.type }}
+      #    restore-keys: |
+      #      ccache-${{ matrix.owner }}-${{ matrix.type }}
+      #      ccache-
+      #- uses: actions/cache@v4
+      #  with:
+      #    path: openwrt/dl
+      #    key: dl-${{ matrix.owner }}-${{ matrix.type }}
+      #    restore-keys: |
+      #      dl-${{ matrix.owner }}-
+      #      dl-
+      #- uses: actions/cache@v4
+      #  with:
+      #    path: openwrt/build_dir
+      #    key: builddir-${{ matrix.owner }}-${{ matrix.type }}
+      #    restore-keys: |
+      #      builddir-${{ matrix.owner }}-
+      #      builddir-
+      #- uses: actions/cache@v4
+      #  with:
+      #    path: openwrt/staging_dir
+      #    key: stagingdir-${{ matrix.owner }}-${{ matrix.type }}
+      #    restore-keys: |
+      #      stagingdir-${{ matrix.owner }}-
+      #      stagingdir-
 
       - name: Copy config
         run: cp "${{ github.workspace }}/${{ matrix.file }}" openwrt/.config
