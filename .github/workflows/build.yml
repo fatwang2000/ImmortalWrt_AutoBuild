@@ -4,8 +4,8 @@ env:
   CACHE_KEEP: 3   # 每个缓存前缀保留数量，可调整
 
 on:
-  schedule:
-    - cron: "0 0 */2 * *"   # 每两天运行一次
+  #schedule:
+  #  - cron: "0 0 */2 * *"   # 每两天运行一次
   workflow_dispatch:        # 手动触发
   push:
     branches-ignore:
