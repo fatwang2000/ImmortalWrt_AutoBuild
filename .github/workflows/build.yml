@@ -95,7 +95,7 @@ jobs:
       - name: Build firmware
         working-directory: openwrt
         run: |
-          make defconfig
+          #make defconfig
           JOBS=$(nproc || echo 2)
           make -j${JOBS} || make -j1 V=s
 
