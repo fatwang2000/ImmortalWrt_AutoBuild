@@ -90,6 +90,9 @@ jobs:
           else
             echo "diy.sh not found, skipping"
           fi
+          yes "" | make oldconfig
+          echo "以下是最终生效的配置与您原始配置的差异（预期不应有重大差异）:"
+          diff -u "../${{ matrix.config_file }}" .config || true  # `|| true` 防止diff有差异时导致工作流失败
 
       #- name: Handle oldconfig
       #  working-directory: ./immortalwrt
