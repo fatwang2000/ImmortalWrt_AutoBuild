@@ -2,8 +2,8 @@ name: build by deepseek
 
 on:
   workflow_dispatch: # 允许手动触发
-  schedule:
-    - cron: '0 0 */2 * *' # 每2天运行一次
+  #schedule:
+  #  - cron: '0 0 */2 * *' # 每2天运行一次
 
 env:
   IMMORTALWRT_REPO: https://github.com/immortalwrt/immortalwrt
