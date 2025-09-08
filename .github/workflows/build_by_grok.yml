@@ -72,8 +72,11 @@ jobs:
       - name: Prepare config
         run: |
           cp "${{ matrix.owner }};${{ matrix.type }}.config" openwrt/.config
-          #cd openwrt
-          #yes "" | make oldconfig
+          cd openwrt
+          yes "" | make oldconfig
+          echo "以下是最终生效的配置与您原始配置的差异（预期不应有重大差异）:"
+          diff -u "${{ matrix.owner }};${{ matrix.type }}.config" .config || true  # `|| true` 防止diff有差异时导致工作流失败
+          
 
       - name: Download packages
         run: |
@@ -92,6 +95,8 @@ jobs:
           zip -r "../../../$artifact_name" .
           cd ../../..
           mv "$artifact_name" .
+          pwd
+          ls -l
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -115,6 +120,8 @@ jobs:
         run: |
           mkdir -p artifacts_flat
           find ./artifacts -type f -name "*.zip" -exec mv {} artifacts_flat/ \;
+          pwd
+          ls -l artifacts_flat
 
       - name: Install GitHub CLI
         run: |
