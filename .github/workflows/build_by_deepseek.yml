@@ -91,10 +91,10 @@ jobs:
             echo "diy.sh not found, skipping"
           fi
 
-      - name: Handle oldconfig
-        working-directory: ./immortalwrt
-        run: |
-          make oldconfig
+      #- name: Handle oldconfig
+      #  working-directory: ./immortalwrt
+      #  run: |
+      #    make oldconfig
 
       - name: Build firmware
         working-directory: ./immortalwrt
