@@ -72,8 +72,8 @@ jobs:
       - name: Prepare config
         run: |
           cp "${{ matrix.owner }};${{ matrix.type }}.config" openwrt/.config
-          cd openwrt
-          yes "" | make oldconfig
+          #cd openwrt
+          #yes "" | make oldconfig
 
       - name: Download packages
         run: |
