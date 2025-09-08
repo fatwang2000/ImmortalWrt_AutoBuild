@@ -99,7 +99,8 @@ jobs:
       - name: Build firmware
         working-directory: ./immortalwrt
         run: |
-          make -j$(nproc) V=s
+          #make -j$(nproc) V=s
+          make -j1 V=s
 
       - name: Collect firmware artifacts
         working-directory: ./immortalwrt/bin/targets
