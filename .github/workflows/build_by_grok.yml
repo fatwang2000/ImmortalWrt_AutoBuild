@@ -111,6 +111,7 @@ jobs:
 
       - name: Build firmware
         run: |
+          df -Th
           cd openwrt
           make -j$(nproc) V=s
 
@@ -129,6 +130,7 @@ jobs:
           zip -r9 ./artifacts/$zipname ./tmp_dir/
           # 记录文件列表
           ls -la artifacts/ > file_list.txt
+          df -Th
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
