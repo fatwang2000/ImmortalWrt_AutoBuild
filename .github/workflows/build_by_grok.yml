@@ -58,7 +58,7 @@ jobs:
           free -h
           df -Th
           cpu_name=$(cat /proc/cpuinfo | grep "model name" | head -n 1 | awk -F: '{print $2}' | sed 's/^[ \t]*//')
-          echo "CPU型号为$(cpu_name)"
+          echo "CPU型号为${cpu_name}"
           
       - name: Setup build environment
         run: |
@@ -76,9 +76,11 @@ jobs:
           sudo rm -rf /etc/mysql /etc/php /usr/lib/jvm /usr/libexec/docker /usr/local /usr/src/* /var/lib/docker /var/lib/gems /var/lib/mysql /var/lib/snapd /etc/skel /opt/{microsoft,az,hostedtoolcache,cni,mssql-tools,pipx} /usr/share/{az*,dotnet,swift,miniconda,gradle*,java,kotlinc,ri,sbt} /root/{.sbt,.local,.npm}
           # sudo sed -i '/NVM_DIR/d;/skel/d' /root/{.bashrc,.profile}
           rm -rf ~/{.cargo,.dotnet,.rustup}
+          
 
       - name: Clone ImmortalWRT
         run: |
+          df -Th
           git clone --depth 1 -b $IMMORTALWRT_BRANCH $IMMORTALWRT_REPO openwrt
           cd openwrt
           ./scripts/feeds update -a
