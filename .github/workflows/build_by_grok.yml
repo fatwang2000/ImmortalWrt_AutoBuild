@@ -113,86 +113,114 @@ jobs:
           cd openwrt
           make -j$(nproc) V=s
 
-      - name: Package firmware
+      - name: Collect firmware artifacts
+        working-directory: ./openwrt/bin/targets
         run: |
-          cd openwrt/bin/targets
-          artifact_name="${{ matrix.type }}_for_${{ matrix.owner }}.zip"
-          zip -r "../../../$artifact_name" .
-          cd ../../..
-          mv "$artifact_name" .
-          pwd
-          ls -l
+          mkdir -p artifacts
+          # 查找所有固件文件
+          find . -name "*.bin" -o -name "*.img" -o -name "*.gz" -o -name "*.zip" -o -name "*.tar" | while read file; do
+            cp "$file" artifacts/
+          done
+          
+          # 记录文件列表
+          ls -la artifacts/ > file_list.txt
 
-      - name: Upload artifact
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.type }}_for_${{ matrix.owner }}
-          path: "*.zip"
+          path: openwrt/bin/targets/artifacts/*
 
   release:
     needs: build
     runs-on: ubuntu-latest
+    if: always()
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download artifacts
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: ./artifacts
 
-      - name: Prepare artifacts
+      - name: Generate firmware list
+        id: generate-list
         run: |
-          mkdir -p artifacts_flat
-          find ./artifacts -type f -name "*.zip" -exec mv {} artifacts_flat/ \;
-          pwd
-          ls -l artifacts_flat
+          FIRMWARE_LIST=""
+          for artifact_dir in ./artifacts/*/; do
+            if [ -d "$artifact_dir" ]; then
+              dir_name=$(basename "$artifact_dir")
+              # 解析目录名格式为type_for_owner
+              IFS='_' read -ra parts <<< "$dir_name"
+              type="${parts[0]}"
+              owner="${parts[2]}"
+              
+              for file in "$artifact_dir"/*; do
+                if [ -f "$file" ]; then
+                  filename=$(basename "$file")
+                  FIRMWARE_LIST+="- **$owner** / $type / \`$filename\`\n"
+                fi
+              done
+            fi
+          done
+          
+          if [ -z "$FIRMWARE_LIST" ]; then
+            FIRMWARE_LIST="本次编译未生成任何固件文件"
+          fi
+          
+          echo "firmware_list<<EOF" >> $GITHUB_OUTPUT
+          echo "$FIRMWARE_LIST" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Install GitHub CLI
+      - name: Get current date
+        id: date
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gh
+          echo "current_date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+          echo "current_datetime=$(date +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_OUTPUT
 
       - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: "固件编译于${{ steps.date.outputs.current_datetime }}"
+          name: "固件编译于${{ steps.date.outputs.current_datetime }}"
+          body: |
+            ![编译日期](https://img.shields.io/badge/编译日期-${{ steps.date.outputs.current_date }}-blue.svg)
+
+            ## 📦 编译固件清单
+            ${{ steps.generate-list.outputs.firmware_list }}
+
+            ## 🏗️ 编译信息
+            - **仓库**: ${{ env.IMMORTALWRT_REPO }}
+            - **分支**: ${{ env.IMMORTALWRT_BRANCH }}
+            - **编译时间**: ${{ steps.date.outputs.current_datetime }}
+
+            ## ⚙️ 自动编译说明
+            本项目每隔2天用最新源码进行自动编译，确保固件始终基于最新的代码和安全性更新。
+
+            📌 **手动触发方式**: 在GitHub Actions页面选择build workflow，点击"Run workflow"按钮。
+
+            > 🔄 定时编译: 每2天自动运行一次
+            > 🚀 手动触发: 随时可以手动启动编译
+            > 📊 编译状态: 独立编译每个配置，失败互不影响
+          files: ./artifacts/**/*
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Clean up old releases
+        uses: dev-drprasad/delete-older-releases@v0.2.0
+        with:
+          keep_latest: 5
+          delete_tag_pattern: "固件编译于*"
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+
+      - name: Show release info
         run: |
-          TAG="固件编译于$(date +%Y-%m-%d_%H-%M-%S)"
-          gh release create "$TAG" --title "$TAG" --notes "Placeholder body"
-
-          # Upload assets
-          asset_files=$(ls artifacts_flat/*.zip)
-          for file in $asset_files; do
-            gh release upload "$TAG" "$file"
-          done
-
-          # Build body
-          compile_date=$(date +%Y-%m-%d)
-          badge="![Compile Date](https://img.shields.io/badge/Compile%20Date-${compile_date//-/%2D}-blue)"
-          
-          firmware_list=""
-          for file in $asset_files; do
-            filename=$(basename "$file")
-            owner_type="${filename%.zip}"
-            owner="${owner_type#*_for_}"  # Note: job_name is type_for_owner, so reverse
-            type="${owner_type%%_for_*}"
-            asset_url=$(gh release view "$TAG" --json assets -q ".assets[] | select(.name == \"$filename\") | .url")
-            firmware_list="$firmware_list\n- **$owner / $type**: [Download]($asset_url)"
-          done
-          
-          repo_info="ImmortalWRT Repository: $IMMORTALWRT_REPO\nBranch: $IMMORTALWRT_BRANCH"
-          
-          auto_build="自动编译说明：本项目每隔2天用最新源码进行编译"
-          
-          body="$badge\n\n编译固件清单：$firmware_list\n\n$repo_info\n\n$auto_build"
-          
-          gh release edit "$TAG" --notes "$body"
-
-      - name: Delete old releases
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
-        run: |
-          releases=$(gh api repos/{owner}/{repo}/releases --paginate | jq -r 'sort_by(.created_at) | reverse | .[].tag_name' | tail -n +6)
-          for tag in $releases; do
-            gh release delete "$tag" --yes
+          echo "Release created successfully!"
+          echo "Tag: 固件编译于${{ steps.date.outputs.current_datetime }}"
+          echo "Firmware files uploaded:"
+          find ./artifacts -type f -name "*" | while read file; do
+            echo "  - $(basename "$file")"
           done
