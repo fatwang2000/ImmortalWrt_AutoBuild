@@ -46,6 +46,7 @@ jobs:
     strategy:
       matrix: ${{ fromJson(needs.discover.outputs.matrix) }}
       fail-fast: false
+    continue-on-error: true # 一个配置失败不影响其他配置
     name: ${{ matrix.type }}_for_${{ matrix.owner }}
     steps:
       - name: Checkout repository
