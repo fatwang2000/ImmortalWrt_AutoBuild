@@ -117,12 +117,16 @@ jobs:
       - name: Collect firmware artifacts
         working-directory: ./openwrt/bin/targets
         run: |
+          mkdir -p tmp_dir
           mkdir -p artifacts
           # 查找所有固件文件
           find . -name "*.bin" -o -name "*.img" -o -name "*.gz" -o -name "*.zip" -o -name "*.tar" | while read file; do
-            cp "$file" artifacts/
+            cp "$file" tmp_dir/
           done
-          
+          rm ./tmp_dir/*kernel*
+          rm ./tmp_dir/*rootfs*
+          zipname="${{ matrix.type }}_for_${{ matrix.owner }}.zip"
+          zip -r9 ./artifacts/$zipname ./tmp_dir/
           # 记录文件列表
           ls -la artifacts/ > file_list.txt
 
@@ -130,98 +134,68 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.type }}_for_${{ matrix.owner }}
-          path: openwrt/bin/targets/artifacts/*
+          path: openwrt/bin/targets/artifacts/*.zip
 
   release:
     needs: build
-    runs-on: ubuntu-latest
-    if: always()
-    permissions:
-      contents: write
+    runs-on: ubuntu-22.04
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           path: ./artifacts
+      - name: Get build datetime
+        id: datetime
+        run: |
+          TZ='Asia/Shanghai' date +'%Y-%m-%d_%H-%M-%S' > datetime.txt
+          echo "datetime=$(cat datetime.txt)" >> $GITHUB_OUTPUT
 
       - name: Generate firmware list
-        id: generate-list
+        id: fwlist
         run: |
-          FIRMWARE_LIST=""
-          for artifact_dir in ./artifacts/*/; do
-            if [ -d "$artifact_dir" ]; then
-              dir_name=$(basename "$artifact_dir")
-              # 解析目录名格式为type_for_owner
-              IFS='_' read -ra parts <<< "$dir_name"
-              type="${parts[0]}"
-              owner="${parts[2]}"
-              
-              for file in "$artifact_dir"/*; do
-                if [ -f "$file" ]; then
-                  filename=$(basename "$file")
-                  FIRMWARE_LIST+="- **$owner** / $type / \`$filename\`\n"
-                fi
-              done
-            fi
-          done
-          
-          if [ -z "$FIRMWARE_LIST" ]; then
-            FIRMWARE_LIST="本次编译未生成任何固件文件"
-          fi
-          
           echo "firmware_list<<EOF" >> $GITHUB_OUTPUT
-          echo "$FIRMWARE_LIST" >> $GITHUB_OUTPUT
+          echo "| 文件名 | Owner | Type | 下载链接 |" >> $GITHUB_OUTPUT
+          echo "|--------|-------|------|----------|" >> $GITHUB_OUTPUT
+          for f in $(find ./artifacts -type f -name "*.zip"); do
+            fname=$(basename "$f")
+            type=$(echo "$fname" | cut -d'_' -f1)
+            owner=$(echo "$fname" | sed -E 's/.*_for_([^.]+).zip/\1/')
+            url="https://github.com/${{ github.repository }}/releases/download/固件编译于${{ steps.datetime.outputs.datetime }}/$fname"
+            echo "| $fname | $owner | $type | [下载]($url) |" >> $GITHUB_OUTPUT
+          done
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Get current date
-        id: date
-        run: |
-          echo "current_date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
-          echo "current_datetime=$(date +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_OUTPUT
-
       - name: Create release
-        uses: softprops/action-gh-release@v1
+        id: create_release
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: "固件编译于${{ steps.date.outputs.current_datetime }}"
-          name: "固件编译于${{ steps.date.outputs.current_datetime }}"
+          tag_name: "固件编译于${{ steps.datetime.outputs.datetime }}"
+          name: "固件编译于 ${{ steps.datetime.outputs.datetime }}"
+          files: ./artifacts/**/**/*.zip
           body: |
-            ![编译日期](https://img.shields.io/badge/编译日期-${{ steps.date.outputs.current_date }}-blue.svg)
+            ![Build Date](https://img.shields.io/badge/编译日期-${{ steps.datetime.outputs.datetime }}-brightgreen)
 
-            ## 📦 编译固件清单
-            ${{ steps.generate-list.outputs.firmware_list }}
+            本次自动编译时间：${{ steps.datetime.outputs.datetime }}
 
-            ## 🏗️ 编译信息
-            - **仓库**: ${{ env.IMMORTALWRT_REPO }}
-            - **分支**: ${{ env.IMMORTALWRT_BRANCH }}
-            - **编译时间**: ${{ steps.date.outputs.current_datetime }}
+            编译固件清单：
+            ${{ steps.fwlist.outputs.firmware_list }}
 
-            ## ⚙️ 自动编译说明
-            本项目每隔2天用最新源码进行自动编译，确保固件始终基于最新的代码和安全性更新。
+            ---
+            🔗 源码仓库: [immortalwrt/immortalwrt]( ${{ env.IMMORTALWRT_REPO }})  
+            🌿 分支:  ${{ env.IMMORTALWRT_BRANCH }}  
 
-            📌 **手动触发方式**: 在GitHub Actions页面选择build workflow，点击"Run workflow"按钮。
-
-            > 🔄 定时编译: 每2天自动运行一次
-            > 🚀 手动触发: 随时可以手动启动编译
-            > 📊 编译状态: 独立编译每个配置，失败互不影响
-          files: ./artifacts/**/*
-          token: ${{ secrets.GH_PAT }}
-
-      - name: Clean up old releases
-        uses: dev-drprasad/delete-older-releases@v0.2.0
-        with:
-          keep_latest: 5
-          delete_tag_pattern: "固件编译于*"
+            ℹ️ 本项目为自动编译仓库，每 2 天会使用 immortalwrt 最新源码进行一次固件编译，并自动发布 Release。
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
-      - name: Show release info
+      - name: Cleanup old releases (keep 5)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          REPO: ${{ github.repository }}
         run: |
-          echo "Release created successfully!"
-          echo "Tag: 固件编译于${{ steps.date.outputs.current_datetime }}"
-          echo "Firmware files uploaded:"
-          find ./artifacts -type f -name "*" | while read file; do
-            echo "  - $(basename "$file")"
+          api="https://api.github.com/repos/${REPO}/releases"
+          releases_json=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" "${api}")
+          ids_to_delete=$(echo "$releases_json" | jq -r 'sort_by(.created_at) | .[0:-5] | .[]?.id')
+          for id in $ids_to_delete; do
+            echo "Deleting release id: $id"
+            curl -s -X DELETE -H "Authorization: token ${GITHUB_TOKEN}" "https://api.github.com/repos/${REPO}/releases/${id}"
           done
