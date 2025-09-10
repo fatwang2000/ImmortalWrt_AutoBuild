@@ -122,18 +122,28 @@ jobs:
       - name: Collect firmware artifacts
         working-directory: ./openwrt/bin/targets
         run: |
+          df -Th
           mkdir -p tmp_dir
           mkdir -p artifacts
           # 查找所有固件文件
           find . -name "*.bin" -o -name "*.img" -o -name "*.gz" -o -name "*.zip" -o -name "*.tar" | while read file; do
             cp "$file" tmp_dir/
           done
-          rm ./tmp_dir/*kernel*
-          rm ./tmp_dir/*rootfs*
+          if [ -f ./tmp_dir/*kernel* ]; then
+            rm ./tmp_dir/*kernel*
+          fi
+          if [ -f ./tmp_dir/*rootfs* ]; then
+            rm ./tmp_dir/*rootfs*
+          fi
+          if [ -f ./tmp_dir/Package* ]; then
+            rm ./tmp_dir/Package*
+          fi
+          
           zipname="${{ matrix.type }}_for_${{ matrix.owner }}.zip"
-          zip -r9 ./artifacts/$zipname ./tmp_dir/
+          cd tmp_dir
+          zip -r9 ../artifacts/$zipname ./*
           # 记录文件列表
-          ls -la artifacts/ > file_list.txt
+          ls -la ../artifacts/ > file_list.txt
           df -Th
 
       - name: Upload artifacts
@@ -169,7 +179,13 @@ jobs:
             echo "| $fname | $owner | $type | [下载]($url) |" >> $GITHUB_OUTPUT
           done
           echo "EOF" >> $GITHUB_OUTPUT
-
+      
+      - name: Get current date
+        id: date
+        run: |
+          echo "current_date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+          echo "current_datetime=$(date +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_OUTPUT
+          
       - name: Create release
         id: create_release
         uses: softprops/action-gh-release@v2
@@ -179,17 +195,21 @@ jobs:
           files: ./artifacts/**/**/*.zip
           body: |
             ![Build Date](https://img.shields.io/badge/编译日期-${{ steps.datetime.outputs.datetime }}-brightgreen)
-
+           
             本次自动编译时间：${{ steps.datetime.outputs.datetime }}
 
-            编译固件清单：
+            📦 编译固件清单：
             ${{ steps.fwlist.outputs.firmware_list }}
 
             ---
             🔗 源码仓库: [immortalwrt/immortalwrt]( ${{ env.IMMORTALWRT_REPO }})  
             🌿 分支:  ${{ env.IMMORTALWRT_BRANCH }}  
 
-            ℹ️ 本项目为自动编译仓库，每 2 天会使用 immortalwrt 最新源码进行一次固件编译，并自动发布 Release。
+            📌 **手动触发方式**: 在GitHub Actions页面选择build workflow，点击"Run workflow"按钮。
+
+            > 🔄 定时编译: 每2天自动运行一次
+            > 🚀 手动触发: 随时可以手动启动编译
+            > 📊 编译状态: 独立编译每个配置，失败互不影响
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
