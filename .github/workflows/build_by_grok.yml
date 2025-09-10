@@ -166,6 +166,13 @@ jobs:
         id: fwlist
         run: |
           echo "firmware_list<<EOF" >> $GITHUB_OUTPUT
+          buildbadge="![Build Date](https://img.shields.io/badge/编译日期-${{ steps.datetime.outputs.datetime }}-brightgreen)"
+          echo "$buildbadge" >> $GITHUB_OUTPUT
+          echo " " >> $GITHUB_OUTPUT
+          buildtime="本次自动编译时间：${{ steps.datetime.outputs.datetime }}"
+          echo "$buildtime" >> $GITHUB_OUTPUT
+          echo " " >> $GITHUB_OUTPUT
+          echo "📦 编译固件清单：" >> $GITHUB_OUTPUT
           echo "| 文件名 | Owner | Type | 下载链接 |" >> $GITHUB_OUTPUT
           echo "|--------|-------|------|----------|" >> $GITHUB_OUTPUT
           for f in $(find ./artifacts -type f -name "*.zip"); do
@@ -195,11 +202,6 @@ jobs:
           name: "固件编译于 ${{ steps.datetime.outputs.datetime }}"
           files: ./artifacts/**/**/*.zip
           body: |
-            ![Build Date](https://img.shields.io/endpoint?url=https://fatwang2000.github.io/ImmortalWrt_Build_GPT/badge.json)
-           
-            本次自动编译时间：${{ steps.datetime.outputs.datetime }}
-
-            📦 编译固件清单：
             ${{ steps.fwlist.outputs.firmware_list }}
 
             ---
