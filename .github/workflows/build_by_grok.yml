@@ -177,6 +177,16 @@ jobs:
           done
           echo "EOF" >> $GITHUB_OUTPUT
       
+      - name: Save datetime to JSON
+        run: |
+          echo '{"schemaVersion": 1, "label": "Build Date", "message": "'${{ steps.datetime.outputs.datetime }}'", "color": "brightgreen"}' > badge.json
+      
+      - name: Deploy JSON to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GH_PAT }}
+          publish_dir: ./badge.json
+
       - name: Create release
         id: create_release
         uses: softprops/action-gh-release@v2
