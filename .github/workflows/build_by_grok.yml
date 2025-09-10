@@ -132,13 +132,21 @@ jobs:
             cp "$file" tmp_dir/
           done
           if [ -f ./tmp_dir/*kernel* ]; then
-            rm ./tmp_dir/*kernel*
+            echo "delete *kernel* ..."
+            ls -l ./tmp_dir/*kernel*
+            rm -f ./tmp_dir/*kernel*
+            echo "check delete *kernel* ..."
+            ls -l ./tmp_dir/*kernel*
           fi
           if [ -f ./tmp_dir/*rootfs* ]; then
-            rm ./tmp_dir/*rootfs*
+            echo "delete **rootfs* ..."
+            ls -l ./tmp_dir/*rootfs*
+            rm -f ./tmp_dir/*rootfs*
+            echo "check delete *rootfs* ..."
+            ls -l ./tmp_dir/*rootfs*
           fi
           if [ -f ./tmp_dir/Package* ]; then
-            rm ./tmp_dir/Package*
+            rm -f ./tmp_dir/Package*
           fi
           
           zipname="${{ matrix.type }}_for_${{ matrix.owner }}.zip"
