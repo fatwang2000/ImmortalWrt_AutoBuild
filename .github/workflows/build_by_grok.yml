@@ -129,7 +129,8 @@ jobs:
           find . -name "*.bin" -o -name "*.img" -o -name "*.gz" -o -name "*.zip" -o -name "*.tar" | while read file; do
             cp "$file" tmp_dir/
           done
-
+          ls -la ./tmp_dir
+          echo "以上为编译好的固件文件"
           rm -f ./tmp_dir/*kernel*
           rm -f ./tmp_dir/*rootfs*
           rm -f ./tmp_dir/Package*
