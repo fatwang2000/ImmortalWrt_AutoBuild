@@ -131,29 +131,17 @@ jobs:
           find . -name "*.bin" -o -name "*.img" -o -name "*.gz" -o -name "*.zip" -o -name "*.tar" | while read file; do
             cp "$file" tmp_dir/
           done
-          if [ -f ./tmp_dir/*kernel* ]; then
-            echo "delete *kernel* ..."
-            ls -l ./tmp_dir/*kernel*
-            rm -f ./tmp_dir/*kernel*
-            echo "check delete *kernel* ..."
-            ls -l ./tmp_dir/*kernel*
-          fi
-          if [ -f ./tmp_dir/*rootfs* ]; then
-            echo "delete **rootfs* ..."
-            ls -l ./tmp_dir/*rootfs*
-            rm -f ./tmp_dir/*rootfs*
-            echo "check delete *rootfs* ..."
-            ls -l ./tmp_dir/*rootfs*
-          fi
-          if [ -f ./tmp_dir/Package* ]; then
-            rm -f ./tmp_dir/Package*
-          fi
-          
+
+          rm -f ./tmp_dir/*kernel*
+          rm -f ./tmp_dir/*rootfs*
+          rm -f ./tmp_dir/Package*
+                  
           zipname="${{ matrix.type }}_for_${{ matrix.owner }}.zip"
           cd tmp_dir
+          ls -la 
           zip -r9 ../artifacts/$zipname ./*
           # 记录文件列表
-          ls -la ../artifacts/ > file_list.txt
+          ls -la ../artifacts/
           df -Th
 
       - name: Upload artifacts
