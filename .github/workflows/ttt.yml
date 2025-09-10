@@ -77,7 +77,7 @@ jobs:
       - name: Get build datetime
         id: datetime
         run: |
-          TZ='Asia/Shanghai' date +'%Y-%m-%d_%H-%M-%S' > datetime.txt
+          TZ='Asia/Shanghai' date +'%Y-%m-%d_%H:%M:%S' > datetime.txt
           echo "datetime=$(cat datetime.txt)" >> $GITHUB_OUTPUT
 
       
