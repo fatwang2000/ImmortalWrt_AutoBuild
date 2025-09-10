@@ -195,7 +195,7 @@ jobs:
           name: "固件编译于 ${{ steps.datetime.outputs.datetime }}"
           files: ./artifacts/**/**/*.zip
           body: |
-            ![Build Date](https://img.shields.io/badge/编译日期-${{ steps.datetime.outputs.datetime }}-brightgreen)
+            ![Build Date](https://img.shields.io/endpoint?url=https://fatwang2000.github.io/ImmortalWrt_Build_GPT/badge.json)
            
             本次自动编译时间：${{ steps.datetime.outputs.datetime }}
 
