@@ -1,0 +1,127 @@
+name: build by test
+
+on:
+  schedule:
+    - cron: '0 0 */2 * *'  # Every 2 days at 00:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  IMMORTALWRT_REPO: https://github.com/immortalwrt/immortalwrt
+  IMMORTALWRT_BRANCH: openwrt-24.10
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.generate-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Generate matrix
+        id: generate-matrix
+        run: |
+          configs=$(ls *.config 2>/dev/null || true)
+          matrix_json='{"include": []}'
+          if [ -n "$configs" ]; then
+            matrix_include=()
+            for config in $configs; do
+              owner_type="${config%.config}"
+              owner="${owner_type%%;*}"
+              type="${owner_type#*;}"
+              matrix_include+=("{\"owner\": \"$owner\", \"type\": \"$type\", \"job_name\": \"${type}_for_${owner}\"}")
+            done
+            matrix_include_str=$(IFS=,; echo "${matrix_include[*]}")
+            matrix_json="{\"include\": [$matrix_include_str]}"
+          fi
+          echo "matrix=$matrix_json" >> $GITHUB_OUTPUT
+
+  build:
+    needs: discover
+    if: ${{ needs.discover.outputs.matrix != '' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJson(needs.discover.outputs.matrix) }}
+      fail-fast: false
+    continue-on-error: true # 一个配置失败不影响其他配置
+    name: ${{ matrix.type }}_for_${{ matrix.owner }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show system
+        run: |
+          echo -e "Total CPU cores\t: $(nproc)"
+          cat /proc/cpuinfo | grep 'model name'
+          free -h
+          df -Th
+          cpu_name=$(cat /proc/cpuinfo | grep "model name" | head -n 1 | awk -F: '{print $2}' | sed 's/^[ \t]*//')
+          echo "CPU型号为${cpu_name}"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.type }}_for_${{ matrix.owner }}
+          path: ./
+
+  release:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+      - name: Get build datetime
+        id: datetime
+        run: |
+          TZ='Asia/Shanghai' date +'%Y-%m-%d_%H-%M-%S' > datetime.txt
+          echo "datetime=$(cat datetime.txt)" >> $GITHUB_OUTPUT
+
+      
+      - name: Get current date
+        id: date
+        run: |
+          echo "current_date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+          echo "current_datetime=$(date +'%Y-%m-%d_%H:%M:%S')" >> $GITHUB_OUTPUT
+          
+      - name: Create release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "固件编译于${{ steps.datetime.outputs.datetime }}"
+          name: "固件编译于 ${{ steps.datetime.outputs.datetime }}"
+          files: ./artifacts/**/**/*
+          body: |
+            ![Build Date](https://img.shields.io/badge/编译日期-${{ steps.datetime.outputs.datetime }}-brightgreen)
+           
+            本次自动编译时间：${{ steps.datetime.outputs.datetime }}
+
+            📦 编译固件清单：
+   
+            ---
+            🔗 源码仓库: [immortalwrt/immortalwrt]( ${{ env.IMMORTALWRT_REPO }})  
+            🌿 分支:  ${{ env.IMMORTALWRT_BRANCH }}  
+
+            📌 **手动触发方式**: 在GitHub Actions页面选择build workflow，点击"Run workflow"按钮。
+
+            > 🔄 定时编译: 每2天自动运行一次
+            > 🚀 手动触发: 随时可以手动启动编译
+            > 📊 编译状态: 独立编译每个配置，失败互不影响
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+
+      - name: Cleanup old releases (keep 5)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          REPO: ${{ github.repository }}
+        run: |
+          api="https://api.github.com/repos/${REPO}/releases"
+          releases_json=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" "${api}")
+          ids_to_delete=$(echo "$releases_json" | jq -r 'sort_by(.created_at) | .[0:-5] | .[]?.id')
+          for id in $ids_to_delete; do
+            echo "Deleting release id: $id"
+            curl -s -X DELETE -H "Authorization: token ${GITHUB_TOKEN}" "https://api.github.com/repos/${REPO}/releases/${id}"
+          done
