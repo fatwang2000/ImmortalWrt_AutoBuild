@@ -88,6 +88,8 @@ jobs:
           df -Th
           git clone --depth 1 -b $IMMORTALWRT_BRANCH $IMMORTALWRT_REPO openwrt
           cd openwrt
+          mkdir -p /mnt/build_dir
+          ln -s /mnt/build_dir build_dir
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
