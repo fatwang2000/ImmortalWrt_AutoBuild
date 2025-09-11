@@ -1,4 +1,4 @@
-name: build by grok
+name: build
 
 on:
   schedule:
