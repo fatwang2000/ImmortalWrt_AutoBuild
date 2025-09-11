@@ -13,14 +13,66 @@ env:
   IMMORTALWRT_BRANCH: openwrt-24.10
 
 jobs:
-  discover:
+  check-updates:
     runs-on: ubuntu-latest
+    # 只有在定时任务时才检查更新，手动触发时跳过检查直接编译
+    if: github.event_name == 'schedule'
     outputs:
-      matrix: ${{ steps.generate-matrix.outputs.matrix }}
+      has_updates: ${{ steps.check.outputs.has_updates }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+        with:
+          fetch-depth: 0
+
+      - name: Set up Git
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@users.noreply.github.com"
+
+      - name: Run check script
+        id: check
+        run: |
+          chmod +x ./check_updates.sh
+          if ./check_updates.sh; then
+            echo "has_updates=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_updates=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Commit updated commit IDs if changed
+        if: steps.check.outputs.has_updates == 'true'
+        run: |
+          git add last_commits.txt
+          git commit -m "Update last commit IDs - $(date)"
+          git push
+
+  discover:
+    runs-on: ubuntu-latest
+    # 触发条件：
+    # 1. 手动触发时直接运行
+    # 2. 定时检查且有更新时运行
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'schedule' && needs.check-updates.outputs.has_updates == 'true')
+    needs: 
+      - check-updates
+    outputs:
+      matrix: ${{ steps.generate-matrix.outputs.matrix }}  
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Determine trigger type
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "🚀 手动触发编译"
+          else
+            echo "🔄 检测到更新，自动触发编译"
+          fi
+
       - name: Generate matrix
         id: generate-matrix
         run: |
