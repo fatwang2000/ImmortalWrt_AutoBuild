@@ -191,8 +191,6 @@ jobs:
           body: |
             ![Build Date](https://img.shields.io/badge/编译日期-${{ steps.datetime.outputs.datetimebadge }}-brightgreen)
             
-            本次自动编译时间：${{ steps.datetime.outputs.datetime }}
-
             📦 编译固件清单：
             ${{ steps.fwlist.outputs.firmware_list }}
 
