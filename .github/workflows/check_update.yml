@@ -1,0 +1,38 @@
+name: Check for updates and build
+
+on:
+  schedule:
+    - cron: '0 0 * * *'   # 每天UTC时间00:00运行
+  workflow_dispatch:       # 允许手动触发
+
+jobs:
+  check-updates:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Git
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@users.noreply.github.com"
+
+      - name: Run check script
+        id: check
+        run: |
+          chmod +x ./check_updates.sh
+          if ./check_updates.sh; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Commit updated commit IDs if changed
+        if: steps.check.outputs.should_build == 'true'
+        run: |
+          git add last_commits.txt
+          git commit -m "Update last commit IDs"
+          git push
+
