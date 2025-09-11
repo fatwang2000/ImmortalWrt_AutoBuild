@@ -1,5 +1,5 @@
-🔗 源码仓库: [immortalwrt/immortalwrt]( ${{ env.IMMORTALWRT_REPO }})  
-🌿 分支:  ${{ env.IMMORTALWRT_BRANCH }}  
+🔗 源码仓库: [immortalwrt/immortalwrt]( https://github.com/immortalwrt/immortalwrt)  
+🌿 分支:  openwrt-24.10  
 
 📌 **手动触发方式**: 在GitHub Actions页面选择build workflow，点击"Run workflow"按钮。
 
