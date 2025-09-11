@@ -23,22 +23,24 @@ fi
 # 检查每个仓库是否有更新
 HAS_UPDATE=false
 for REPO in "${REPOS[@]}"; do
-    echo "Checking $REPO ..."
+    echo "检查仓库: $REPO ..."
     # 获取远程分支的最新 commit ID
     LATEST_COMMIT=$(git ls-remote "$REPO" "refs/heads/$BRANCH" | cut -f1)
     if [[ -z "$LATEST_COMMIT" ]]; then
-        echo "Error: Failed to get commit ID for $REPO"
+        echo "错误: 无法获取 $REPO 的 commit ID"
         exit 1
     fi
 
     # 与上次记录的 commit ID 比较
     if [[ "${LAST_COMMITS["$REPO"]}" != "$LATEST_COMMIT" ]]; then
-        echo "Update detected in $REPO"
+        echo "✅ 检测到更新: $REPO"
+        echo "   旧 commit: ${LAST_COMMITS["$REPO"]}"
+        echo "   新 commit: $LATEST_COMMIT"
         HAS_UPDATE=true
         # 更新记录
         LAST_COMMITS["$REPO"]="$LATEST_COMMIT"
     else
-        echo "No update in $REPO"
+        echo "✅ 无更新: $REPO"
     fi
 done
 
@@ -49,9 +51,9 @@ if [[ "$HAS_UPDATE" == true ]]; then
     for REPO in "${REPOS[@]}"; do
         echo "$REPO ${LAST_COMMITS["$REPO"]}" >> "$COMMIT_FILE"
     done
-    echo "Changes detected, triggering build."
+    echo "🎯 检测到代码更新，需要编译"
     exit 0
 else
-    echo "No changes, skipping build."
+    echo "⏭️  无代码更新，跳过编译"
     exit 1
 fi
