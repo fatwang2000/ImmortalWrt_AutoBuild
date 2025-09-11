@@ -3,7 +3,7 @@ name: build
 on:
   schedule:
     - cron: '0 18 */2 * *'  # Every 2 days at 02:00 China Standard Time (CST)
-    - cron: '15 23 * * *'
+    - cron: '22 23 * * *'
   workflow_dispatch:
 
 permissions:
@@ -17,7 +17,7 @@ jobs:
   check-updates:
     runs-on: ubuntu-latest
     outputs:
-      has_updates
+      has_updates:  ${{ steps.check.outputs.has_updates }} 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
