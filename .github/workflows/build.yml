@@ -16,26 +16,19 @@ jobs:
   check-updates:
     runs-on: ubuntu-latest
     outputs:
-      has_updates: ${{ steps.set-default.outputs.has_updates }}
+      has_updates
     steps:
-      - name: Set default (for manual trigger fallback)
-        id: set-default
-        run: echo "has_updates=false" >> $GITHUB_OUTPUT
-
       - name: Checkout repository
-        if: github.event_name == 'schedule'
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Set up Git
-        if: github.event_name == 'schedule'
         run: |
           git config --global user.name "github-actions"
           git config --global user.email "github-actions@users.noreply.github.com"
 
       - name: Run check script
-        if: github.event_name == 'schedule'
         id: check
         run: |
           chmod +x ./check_updates.sh
@@ -44,10 +37,6 @@ jobs:
           else
             echo "has_updates=false" >> $GITHUB_OUTPUT
           fi
-
-      - name: Override default output
-        if: github.event_name == 'schedule'
-        run: echo "has_updates=${{ steps.check.outputs.has_updates }}" >> $GITHUB_OUTPUT
 
   discover:
     runs-on: ubuntu-latest
