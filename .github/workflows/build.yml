@@ -3,7 +3,6 @@ name: build
 on:
   schedule:
     - cron: '0 18 */2 * *'  # Every 2 days at 02:00 China Standard Time (CST)
-    - cron: '30 23 * * *'
   workflow_dispatch:
 
 permissions:
@@ -40,7 +39,8 @@ jobs:
           fi
           
       - name: Commit updated commit IDs if changed
-        if: steps.check.outputs.has_updates == 'true'
+        if: (github.event_name == 'schedule' && steps.check.outputs.has_updates == 'true')
+        # 如果不是定时任务，则检查到源码仓库有更新，也不去提交最新的git信息
         run: |
           git add last_commits.txt
           git commit -m "Update last commit IDs"
