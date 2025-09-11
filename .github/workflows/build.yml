@@ -55,6 +55,7 @@ jobs:
     if: |
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'schedule' && needs.check-updates.outputs.has_updates == 'true')
+    # 只有定时触发时才需要 check-updates
     needs: 
       - check-updates
     outputs:
