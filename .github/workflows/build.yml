@@ -52,12 +52,12 @@ jobs:
     # 触发条件：
     # 1. 手动触发时直接运行
     # 2. 定时检查且有更新时运行
+
+    # 只有定时触发时才需要 check-updates
+    needs: [check-updates]
     if: |
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'schedule' && needs.check-updates.outputs.has_updates == 'true')
-    # 只有定时触发时才需要 check-updates
-    needs: 
-      - check-updates
     outputs:
       matrix: ${{ steps.generate-matrix.outputs.matrix }}  
     steps:
