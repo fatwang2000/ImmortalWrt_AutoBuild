@@ -1,3 +1,3 @@
-https://github.com/immortalwrt/immortalwrt bbe14eba18846fc8624446f1b02297012b2057f4
-https://github.com/immortalwrt/packages 2c2daa60ef699a4ac28973a4da5606b12ace7264
+https://github.com/immortalwrt/immortalwrt 6fb830edaff6c74906f2c0ff6ec1bb83cd8a3723
+https://github.com/immortalwrt/packages a179cd08cf31a45616af22d5e7510a567c40ef09
 https://github.com/immortalwrt/luci c34235a2c8a61dfce67d675010468b49e19f20e8
