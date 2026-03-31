@@ -202,7 +202,7 @@ jobs:
           df -Th
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.type }}_for_${{ matrix.owner }}
           path: openwrt/bin/targets/artifacts/*.zip
@@ -241,7 +241,7 @@ jobs:
 
       - name: Create release
         id: create_release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v5
         with:
           tag_name: "固件编译于${{ steps.datetime.outputs.datetime }}"
           name: "固件编译于 ${{ steps.datetime.outputs.datetime }}"
