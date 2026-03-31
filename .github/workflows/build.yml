@@ -135,6 +135,8 @@ jobs:
           df -Th
           git clone --depth 1 -b $IMMORTALWRT_BRANCH $IMMORTALWRT_REPO openwrt
           cd openwrt
+          echo 'src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git;main' >> feeds.conf.default
+          echo 'src-git passwall_luci https://github.com/Openwrt-Passwall/openwrt-passwall.git;main' >> feeds.conf.default
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
