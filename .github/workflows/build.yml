@@ -19,7 +19,7 @@ jobs:
       has_updates:  ${{ steps.check.outputs.has_updates }} 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -56,7 +56,7 @@ jobs:
       matrix: ${{ steps.generate-matrix.outputs.matrix }}  
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           submodules: recursive
 
@@ -97,7 +97,7 @@ jobs:
     name: ${{ matrix.type }}_for_${{ matrix.owner }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Show system
         run: |
@@ -135,18 +135,17 @@ jobs:
           df -Th
           git clone --depth 1 -b $IMMORTALWRT_BRANCH $IMMORTALWRT_REPO openwrt
           cd openwrt
-          sed -i '1i src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git;main' feeds.conf.default
-          sed -i '2i src-git passwall_luci https://github.com/Openwrt-Passwall/openwrt-passwall.git;main' feeds.conf.default
-          ./scripts/feeds update -a
-          rm -rf feeds/luci/applications/luci-app-passwall*
-          rm -rf feeds/packages/net/xray-core
-          rm -rf feeds/packages/net/xray-plugin
-          rm -rf feeds/packages/net/v2ray-geodata
-          rm -rf feeds/packages/net/sing-box
-          rm -rf feeds/packages/net/geoview
-          rm -rf feeds/packages/net/chinadns-ng
-          rm -rf feeds/packages/net/v2ray-plugin
-          rm -rf feeds/packages/net/simple-obfs
+          echo 'src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git;main' >> feeds.conf.default
+          echo 'src-git passwall_luci https://github.com/Openwrt-Passwall/openwrt-passwall.git;main' >> feeds.conf.default          ./scripts/feeds update -a
+          cp -rf feeds/passwall_luci/luci-app-passwall/ feeds/luci/applications/
+          cp -rf feeds/passwall_packages/xray-core/ feeds/packages/net/
+          cp -rf feeds/passwall_packages/xray-plugin/ feeds/packages/net/
+          cp -rf feeds/passwall_packages/v2ray-geodata/ feeds/packages/net/
+          cp -rf feeds/passwall_packages/sing-box feeds/packages/net/
+          cp -rf feeds/passwall_packages/geoview feeds/packages/net/
+          cp -rf feeds/passwall_packages/chinadns-ng feeds/packages/net/
+          cp -rf feeds/passwall_packages/v2ray-plugin feeds/packages/net/
+          cp -rf feeds/passwall_packages/simple-obfs feeds/packages/net/
           ./scripts/feeds install -a -f
 
       - name: Run diy.sh if exists
@@ -202,7 +201,7 @@ jobs:
           df -Th
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.type }}_for_${{ matrix.owner }}
           path: openwrt/bin/targets/artifacts/*.zip
@@ -211,7 +210,7 @@ jobs:
     needs: build
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v4
         with:
           path: ./artifacts
       
@@ -241,7 +240,7 @@ jobs:
 
       - name: Create release
         id: create_release
-        uses: softprops/action-gh-release@v5
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: "固件编译于${{ steps.datetime.outputs.datetime }}"
           name: "固件编译于 ${{ steps.datetime.outputs.datetime }}"
