@@ -136,6 +136,8 @@ jobs:
           git clone --depth 1 -b $IMMORTALWRT_BRANCH $IMMORTALWRT_REPO openwrt
           cd openwrt
           ./scripts/feeds update -a
+          rm -rf feeds/packages/lang/golang
+          git clone https://github.com/kenzok8/golang -b 1.26 feeds/packages/lang/golang
           ./scripts/feeds install -a 
 
           # 移除 openwrt feeds 自带的核心库
@@ -147,8 +149,8 @@ jobs:
           git clone https://github.com/Openwrt-Passwall/openwrt-passwall package/passwall-luci
          
           #用最新的golang版本
-          rm -rf feeds/packages/lang/golang
-          git clone https://github.com/sbwml/packages_lang_golang -b 24.x feeds/packages/lang/golang
+          # rm -rf feeds/packages/lang/golang
+          # git clone https://github.com/sbwml/packages_lang_golang -b 24.x feeds/packages/lang/golang
           
       - name: Run diy.sh if exists
         run: |
