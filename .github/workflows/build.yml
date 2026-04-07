@@ -245,7 +245,7 @@ jobs:
 
       - name: Create release
         id: create_release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v2.3.0
         with:
           tag_name: "固件编译于${{ steps.datetime.outputs.datetime }}"
           name: "固件编译于 ${{ steps.datetime.outputs.datetime }}"
