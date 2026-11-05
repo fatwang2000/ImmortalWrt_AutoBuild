@@ -1,0 +1,296 @@
+name: build-test
+
+on:
+  schedule:
+    - cron: '0 18 */2 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  IMMORTALWRT_REPO: https://github.com/immortalwrt/immortalwrt
+  # 移除了硬编码的 IMMORTALWRT_BRANCH，改由矩阵变量控制
+
+jobs:
+  check-updates:
+    runs-on: ubuntu-latest
+    outputs:
+      has_updates:  ${{ steps.check.outputs.has_updates }} 
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@main
+        with:
+          fetch-depth: 0
+
+      - name: Set up Git
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@users.noreply.github.com"
+
+      - name: Run check script
+        id: check
+        run: |
+          chmod +x ./check_updates.sh
+          if ./check_updates.sh; then
+            echo "has_updates=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_updates=false" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Commit updated commit IDs if changed
+        if: (github.event_name == 'schedule' && steps.check.outputs.has_updates == 'true')
+        run: |
+          git add last_commits.txt
+          git commit -m "Update last commit IDs"
+          git push
+          
+  discover:
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'schedule' && needs.check-updates.outputs.has_updates == 'true')
+    needs: [check-updates]
+    outputs:
+      matrix: ${{ steps.generate-matrix.outputs.matrix }}  
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@main
+        with:
+          submodules: recursive
+
+      - name: Determine trigger type
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "🚀 手动触发编译"
+          else
+            echo "🔄 检测到更新，自动触发编译"
+          fi
+
+      - name: Generate matrix
+        id: generate-matrix
+        run: |
+          configs=$(ls *.config 2>/dev/null || true)
+          matrix_json='{"include": []}'
+          if [ -n "$configs" ]; then
+            matrix_include=()
+            for config in $configs; do
+              # 解析文件名：owner;type[@branch].config
+              base="${config%.config}"
+              if [[ "$base" == *"@"* ]]; then
+                branch_tag="${base##*@}"
+                base="${base%@*}"
+                # 规范化分支名：如果只写了 25.12，自动补全为 openwrt-25.12
+                if [[ "$branch_tag" == *"openwrt-"* ]]; then
+                  branch="$branch_tag"
+                else
+                  branch="openwrt-${branch_tag}"
+                fi
+              else
+                branch="openwrt-24.10"   # 默认分支
+              fi
+
+              owner_type="$base"
+              owner="${owner_type%%;*}"
+              type="${owner_type#*;}"
+
+              matrix_include+=("{\"owner\": \"$owner\", \"type\": \"$type\", \"branch\": \"$branch\", \"job_name\": \"${type}_for_${owner}_${branch}\"}")
+            done
+            matrix_include_str=$(IFS=,; echo "${matrix_include[*]}")
+            matrix_json="{\"include\": [$matrix_include_str]}"
+          fi
+          echo "matrix=$matrix_json" >> $GITHUB_OUTPUT
+
+  build:
+    needs: discover
+    if: ${{ needs.discover.outputs.matrix != '' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJson(needs.discover.outputs.matrix) }}
+      fail-fast: false
+    continue-on-error: true
+    name: ${{ matrix.job_name }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@main
+
+      - name: Show system
+        run: |
+          echo -e "Total CPU cores\t: $(nproc)"
+          cat /proc/cpuinfo | grep 'model name'
+          free -h
+          df -Th
+          cpu_name=$(cat /proc/cpuinfo | grep "model name" | head -n 1 | awk -F: '{print $2}' | sed 's/^[ \t]*//')
+          echo "CPU型号为${cpu_name}"
+
+      - name: Free disk space
+        run: |
+          sudo docker image prune -a -f
+          sudo systemctl stop docker
+          sudo snap set system refresh.retain=2
+          sudo apt-get -y purge firefox clang* ghc* google* llvm* mono* mongo* mysql* php*
+          sudo apt-get -y autoremove --purge
+          sudo apt-get clean
+          sudo rm -rf /etc/mysql /etc/php /usr/lib/jvm /usr/libexec/docker /usr/local /usr/src/* /var/lib/docker /var/lib/gems /var/lib/mysql /var/lib/snapd /etc/skel /opt/{microsoft,az,hostedtoolcache,cni,mssql-tools,pipx} /usr/share/{az*,dotnet,swift,miniconda,gradle*,java,kotlinc,ri,sbt} /root/{.sbt,.local,.npm}
+          rm -rf ~/{.cargo,.dotnet,.rustup}
+          df -Th
+          
+      - name: Setup build environment
+        run: |
+          df -Th
+          sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+          sudo -E apt-get -qq autoremove --purge
+          sudo -E apt-get -qq clean
+          sudo timedatectl set-timezone "Asia/Shanghai"
+
+      - name: Clone ImmortalWRT
+        run: |
+          df -Th
+          # 使用矩阵中的分支变量
+          git clone --depth 1 -b ${{ matrix.branch }} $IMMORTALWRT_REPO openwrt
+          cd openwrt
+          ./scripts/feeds update -a
+
+          # 注意：kenzok8/golang 的 1.27 分支可能存在版本匹配问题，
+          # 25.12 可能自带更新的 golang，如果编译失败可先注释掉这段。
+          rm -rf feeds/packages/lang/golang
+          git clone https://github.com/kenzok8/golang -b 1.27 feeds/packages/lang/golang
+          ./scripts/feeds install -a 
+
+          rm -rf feeds/packages/net/{xray-core,v2ray-geodata,sing-box,chinadns-ng,dns2socks,hysteria,ipt2socks,microsocks,naiveproxy,shadowsocks-libev,shadowsocks-rust,shadowsocksr-libev,simple-obfs,tcping,trojan-plus,tuic-client,v2ray-plugin,xray-plugin,geoview,shadow-tls}
+          git clone https://github.com/Openwrt-Passwall/openwrt-passwall-packages package/passwall-packages
+
+          rm -rf feeds/luci/applications/luci-app-passwall
+          git clone https://github.com/Openwrt-Passwall/openwrt-passwall package/passwall-luci
+          
+      - name: Run diy.sh if exists
+        run: |
+          if [ -f diy.sh ]; then
+            cp diy.sh openwrt/diy.sh
+            cd openwrt
+            bash diy.sh
+          fi
+
+      - name: Prepare config
+        run: |
+          # 配置文件路径保持原样，因为矩阵是根据文件名生成的
+          cp "${{ matrix.owner }};${{ matrix.type }}.config" openwrt/.config 2>/dev/null || \
+          cp "${{ matrix.owner }};${{ matrix.type }}@${{ matrix.branch }}.config" openwrt/.config
+          cd openwrt
+          yes "" | make oldconfig
+          echo "以下是最终生效的配置与您原始配置的差异:"
+          diff -u "../${{ matrix.owner }};${{ matrix.type }}.config" .config 2>/dev/null || \
+          diff -u "../${{ matrix.owner }};${{ matrix.type }}@${{ matrix.branch }}.config" .config || true
+          
+
+      - name: Download packages
+        run: |
+          cd openwrt
+          make -j$(nproc) download V=s
+          
+      - name: Build firmware
+        run: |
+          df -Th
+          cd openwrt
+          make -j$(nproc) V=s
+
+      - name: Collect firmware artifacts
+        working-directory: ./openwrt/bin/targets
+        run: |
+          df -Th
+          mkdir -p tmp_dir
+          mkdir -p artifacts
+          find . -name "*.bin" -o -name "*.img" -o -name "*.gz" -o -name "*.zip" -o -name "*.tar" | while read file; do
+            cp "$file" tmp_dir/
+          done
+          ls -la ./tmp_dir
+          echo "以上为编译好的固件文件"
+          rm -f ./tmp_dir/*kernel*
+          rm -f ./tmp_dir/*rootfs*
+          rm -f ./tmp_dir/Package*
+                  
+          # 文件名包含分支，避免不同分支互相覆盖
+          zipname="${{ matrix.type }}_for_${{ matrix.owner }}_${{ matrix.branch }}.zip"
+          cd tmp_dir
+          ls -la 
+          zip -r9 ../artifacts/$zipname ./*
+          ls -la ../artifacts/
+          df -Th
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          # 工件名称包含分支
+          name: ${{ matrix.type }}_for_${{ matrix.owner }}_${{ matrix.branch }}
+          path: openwrt/bin/targets/artifacts/*.zip
+
+  release:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: ./artifacts
+      
+      - name: Get build datetime
+        id: datetime
+        run: |
+          TZ='Asia/Shanghai' date +'%Y-%m-%d_%H-%M-%S' > datetime.txt
+          echo "datetime=$(cat datetime.txt)" >> $GITHUB_OUTPUT
+          sed -i 's/\([0-9]\+\)-\([0-9]\+\)-\([0-9]\+\)_\([0-9]\+\)-\([0-9]\+\)-\([0-9]\+\)/\1--\2--\3_\4:\5:\6/' datetime.txt
+          echo "datetimebadge=$(cat datetime.txt)" >> $GITHUB_OUTPUT
+
+      - name: Generate firmware list
+        id: fwlist
+        run: |
+          echo "firmware_list<<EOF" >> $GITHUB_OUTPUT
+          echo "| 文件名 | Owner | Type | 分支 | 下载链接 |" >> $GITHUB_OUTPUT
+          echo "|--------|-------|------|------|----------|" >> $GITHUB_OUTPUT
+          for f in $(find ./artifacts -type f -name "*.zip"); do
+            fname=$(basename "$f")
+            # 文件名格式: type_for_owner_branch.zip
+            type=$(echo "$fname" | cut -d'_' -f1)
+            owner=$(echo "$fname" | sed -E 's/.*_for_([^_]+)_.*\.zip/\1/')
+            branch=$(echo "$fname" | sed -E 's/.*_for_[^_]+_(.*)\.zip/\1/')
+            url="https://github.com/${{ github.repository }}/releases/download/固件编译于${{ steps.datetime.outputs.datetime }}/$fname"
+            echo "| $fname | $owner | $type | $branch | [下载]($url) |" >> $GITHUB_OUTPUT
+          done
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create release
+        id: create_release
+        uses: softprops/action-gh-release@v2.6.1
+        with:
+          tag_name: "固件编译于${{ steps.datetime.outputs.datetime }}"
+          name: "固件编译于 ${{ steps.datetime.outputs.datetime }}"
+          files: ./artifacts/**/**/*.zip
+          body: |
+            ![Build Date](https://img.shields.io/badge/编译日期-${{ steps.datetime.outputs.datetimebadge }}-brightgreen)
+            
+            📦 编译固件清单：
+            ${{ steps.fwlist.outputs.firmware_list }}
+
+            ---
+            🔗 源码仓库: [immortalwrt/immortalwrt]( ${{ env.IMMORTALWRT_REPO }})  
+            🌿 分支: 由各配置文件名中的 `@` 标签决定（未标注则默认为 `openwrt-24.10`）
+
+            📌 **手动触发方式**: 在GitHub Actions页面选择build workflow，点击"Run workflow"按钮。
+
+            > 🔄 定时编译: 每2天自动运行一次
+            > 🚀 手动触发: 随时可以手动启动编译
+            > 📊 编译状态: 独立编译每个配置，失败互不影响
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+
+      - name: Cleanup old releases (keep 5)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          REPO: ${{ github.repository }}
+        run: |
+          api="https://api.github.com/repos/${REPO}/releases"
+          releases_json=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" "${api}")
+          ids_to_delete=$(echo "$releases_json" | jq -r 'sort_by(.created_at) | .[0:-5] | .[]?.id')
+          for id in $ids_to_delete; do
+            echo "Deleting release id: $id"
+            curl -s -X DELETE -H "Authorization: token ${GITHUB_TOKEN}" "https://api.github.com/repos/${REPO}/releases/${id}"
+          done
