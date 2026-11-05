@@ -175,7 +175,7 @@ jobs:
         run: |
           # 配置文件路径保持原样，因为矩阵是根据文件名生成的
           cp "${{ matrix.owner }};${{ matrix.type }}.config" openwrt/.config 2>/dev/null || \
-          cp "${{ matrix.owner }};${{ matrix.type }}@${{ matrix.branch }}.config" openwrt/.config
+          cp "${{ matrix.base }}.config" openwrt/.config
           cd openwrt
           yes "" | make oldconfig
           echo "以下是最终生效的配置与您原始配置的差异:"
