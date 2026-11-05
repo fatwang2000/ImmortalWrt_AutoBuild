@@ -75,32 +75,32 @@ jobs:
           if [ -n "$configs" ]; then
             matrix_include=()
             for config in $configs; do
-              # 解析文件名：owner;type[@branch].config
+              # 原始文件名：owner;type[@branch].config
               base="${config%.config}"
               if [[ "$base" == *"@"* ]]; then
                 branch_tag="${base##*@}"
                 base="${base%@*}"
-                # 规范化分支名：如果只写了 25.12，自动补全为 openwrt-25.12
+                # 规范化分支名：25.12 -> openwrt-25.12；openwrt-25.12 保持不变
                 if [[ "$branch_tag" == *"openwrt-"* ]]; then
                   branch="$branch_tag"
                 else
                   branch="openwrt-${branch_tag}"
                 fi
               else
-                branch="openwrt-24.10"   # 默认分支
+                branch="openwrt-24.10"   # 未标注分支时默认 24.10
               fi
 
               owner_type="$base"
               owner="${owner_type%%;*}"
               type="${owner_type#*;}"
 
-              matrix_include+=("{\"owner\": \"$owner\", \"type\": \"$type\", \"branch\": \"$branch\", \"job_name\": \"${type}_for_${owner}_${branch}\"}")
+              # 关键：把 config 原始文件名也放进矩阵
+              matrix_include+=("{\"owner\": \"$owner\", \"type\": \"$type\", \"branch\": \"$branch\", \"config_file\": \"$config\", \"job_name\": \"${type}_for_${owner}_${branch}\"}")
             done
             matrix_include_str=$(IFS=,; echo "${matrix_include[*]}")
             matrix_json="{\"include\": [$matrix_include_str]}"
           fi
           echo "matrix=$matrix_json" >> $GITHUB_OUTPUT
-
   build:
     needs: discover
     if: ${{ needs.discover.outputs.matrix != '' }}
@@ -173,14 +173,12 @@ jobs:
 
       - name: Prepare config
         run: |
-          # 配置文件路径保持原样，因为矩阵是根据文件名生成的
-          cp "${{ matrix.owner }};${{ matrix.type }}.config" openwrt/.config 2>/dev/null || \
-          cp "${{ matrix.base }}.config" openwrt/.config
+          # 直接使用矩阵里记录的原始文件名，不再反拼
+          cp "${{ matrix.config_file }}" openwrt/.config
           cd openwrt
           yes "" | make oldconfig
-          echo "以下是最终生效的配置与您原始配置的差异:"
-          diff -u "../${{ matrix.owner }};${{ matrix.type }}.config" .config 2>/dev/null || \
-          diff -u "../${{ matrix.owner }};${{ matrix.type }}@${{ matrix.branch }}.config" .config || true
+          echo "以下是最终生效的配置与您原始配置的差异（预期不应有重大差异）:"
+          diff -u "../${{ matrix.config_file }}" .config || true
           
 
       - name: Download packages
