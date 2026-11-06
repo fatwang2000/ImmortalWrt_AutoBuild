@@ -1,3 +1,6 @@
-https://github.com/immortalwrt/immortalwrt af0775ab50d2d0e41f4e558c59208f6c9b8bdf0b
-https://github.com/immortalwrt/packages 171d5f9203379f77693807d7283515a873f95df9
-https://github.com/immortalwrt/luci d72e293e6fd698af75510b9018fb7e154ae219cc
+https //github.com/immortalwrt/luci:openwrt-24.10 d72e293e6fd698af75510b9018fb7e154ae219cc
+https //github.com/immortalwrt/luci:openwrt-25.12 c38e5665e826f5e6e2ac9168e167ee368d0969d9
+https //github.com/immortalwrt/packages:openwrt-25.12 fa25995d74a720c1c98bf6265d3dd8b4eb620d1f
+https //github.com/immortalwrt/immortalwrt:openwrt-24.10 af0775ab50d2d0e41f4e558c59208f6c9b8bdf0b
+https //github.com/immortalwrt/packages:openwrt-24.10 171d5f9203379f77693807d7283515a873f95df9
+https //github.com/immortalwrt/immortalwrt:openwrt-25.12 3682a14dd5ec6382af65d7e72b5b415b5f3173a8
