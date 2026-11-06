@@ -1,8 +1,8 @@
 name: build
 
 on:
-  schedule:
-    - cron: '0 18 */2 * *'  # Every 2 days at 02:00 China Standard Time (CST)
+  #schedule:
+  #  - cron: '0 18 */2 * *'  # Every 2 days at 02:00 China Standard Time (CST)
   workflow_dispatch:
 
 permissions:
