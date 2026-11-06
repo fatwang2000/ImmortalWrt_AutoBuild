@@ -39,7 +39,8 @@ jobs:
           fi
           
       - name: Commit updated commit IDs if changed
-        if: (github.event_name == 'schedule' && steps.check.outputs.has_updates == 'true')
+        #if: (github.event_name == 'schedule' && steps.check.outputs.has_updates == 'true')
+        if: (steps.check.outputs.has_updates == 'true')
         run: |
           git add last_commits.txt
           git commit -m "Update last commit IDs"
