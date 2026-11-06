@@ -2,7 +2,7 @@ name: build-test
 
 on:
   schedule:
-    - cron: '0 18 */2 * *'
+    - cron: '50 6 * * *'
   workflow_dispatch:
 
 permissions:
