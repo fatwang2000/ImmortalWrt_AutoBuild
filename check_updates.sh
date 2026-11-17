@@ -6,6 +6,7 @@ REPOS=(
     "https://github.com/immortalwrt/packages|openwrt-24.10,openwrt-25.12"
     "https://github.com/immortalwrt/luci|openwrt-24.10,openwrt-25.12"
     "https://github.com/Openwrt-Passwall/openwrt-passwall|main"
+    "https://github.com/Openwrt-Passwall/openwrt-passwall-packages|main"
 )
 
 COMMIT_FILE="last_commits.txt"
