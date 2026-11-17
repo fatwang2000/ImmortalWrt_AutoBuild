@@ -1,22 +1,15 @@
 #!/bin/bash
 
+# 仓库及其需要监控的分支，格式: "仓库URL|分支1,分支2,..."
 REPOS=(
-    "https://github.com/immortalwrt/immortalwrt"
-    "https://github.com/immortalwrt/packages"
-    "https://github.com/immortalwrt/luci"
+    "https://github.com/immortalwrt/immortalwrt|openwrt-24.10,openwrt-25.12"
+    "https://github.com/immortalwrt/packages|openwrt-24.10,openwrt-25.12"
+    "https://github.com/immortalwrt/luci|openwrt-24.10,openwrt-25.12"
+    "https://github.com/Openwrt-Passwall/openwrt-passwall|main"
 )
 
-# 需要检查的分支列表
-BRANCHES=(
-    "openwrt-24.10"
-    "openwrt-25.12"
-)
-
-# 存储上次检查的 commit ID 的文件
 COMMIT_FILE="last_commits.txt"
 
-# 初始化或读取上次的 commit ID
-# 文件格式: <repo> <branch> <commit>
 declare -A LAST_COMMITS
 if [[ -f "$COMMIT_FILE" ]]; then
     while IFS= read -r line; do
@@ -25,19 +18,22 @@ if [[ -f "$COMMIT_FILE" ]]; then
         branch=$(echo "$line" | awk '{print $2}')
         commit=$(echo "$line" | awk '{print $3}')
         [[ -z "$repo" || -z "$branch" || -z "$commit" ]] && continue
-        LAST_COMMITS["${repo}:${branch}"]="$commit"
+        LAST_COMMITS["${repo}|${branch}"]="$commit"
     done < "$COMMIT_FILE"
 fi
 
-# 检查每个仓库、每个分支是否有更新
 HAS_UPDATE=false
-for BRANCH in "${BRANCHES[@]}"; do
-    echo "===== 检查分支: $BRANCH ====="
-    for REPO in "${REPOS[@]}"; do
-        KEY="${REPO}:${BRANCH}"
-        echo "检查仓库: $REPO ($BRANCH) ..."
+for REPO_ENTRY in "${REPOS[@]}"; do
+    REPO="${REPO_ENTRY%%|*}"
+    BRANCH_LIST="${REPO_ENTRY#*|}"
 
-        # 用 --exit-code 区分 “分支不存在(2)” 和 “网络/仓库错误(其它非0)”
+    echo "===== 检查仓库: $REPO ====="
+
+    IFS=',' read -ra BRANCHES <<< "$BRANCH_LIST"
+    for BRANCH in "${BRANCHES[@]}"; do
+        KEY="${REPO}|${BRANCH}"
+        echo "检查分支: $BRANCH ..."
+
         LS_OUT=$(git ls-remote --exit-code "$REPO" "refs/heads/$BRANCH" 2>/dev/null)
         RC=$?
 
@@ -58,7 +54,6 @@ for BRANCH in "${BRANCHES[@]}"; do
         OLD_COMMIT="${LAST_COMMITS[$KEY]}"
 
         if [[ -z "$OLD_COMMIT" ]]; then
-            # 首次记录（新分支或首次运行）
             echo "🆕 首次记录: $REPO ($BRANCH)"
             echo "   commit: $LATEST_COMMIT"
             HAS_UPDATE=true
@@ -75,12 +70,11 @@ for BRANCH in "${BRANCHES[@]}"; do
     done
 done
 
-# 如果有更新，则更新 commit 记录文件并返回成功（触发编译）
 if [[ "$HAS_UPDATE" == true ]]; then
-    > "$COMMIT_FILE"  # 清空文件
+    > "$COMMIT_FILE"
     for KEY in "${!LAST_COMMITS[@]}"; do
-        repo="${KEY%%:*}"      # 第一个冒号前
-        branch="${KEY#*:}"     # 第一个冒号后
+        repo="${KEY%%|*}"
+        branch="${KEY#*|}"
         echo "$repo $branch ${LAST_COMMITS[$KEY]}" >> "$COMMIT_FILE"
     done
     echo "🎯 检测到代码更新，需要编译"
