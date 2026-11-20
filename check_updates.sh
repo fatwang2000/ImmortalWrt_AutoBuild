@@ -143,22 +143,42 @@ for RELEASE_REPO in "${RELEASE_REPOS[@]}"; do
 done
 
 # ============================================================
-# 7. 如果有更新，则写回记录文件并返回成功（触发编译）
+# 7. 如果有更新，写回记录文件（仅当内容真正变化时才覆盖）
 # ============================================================
 if [[ "$HAS_UPDATE" == true ]]; then
-    # 写回 commit 记录
-    > "$COMMIT_FILE"
-    for KEY in "${!LAST_COMMITS[@]}"; do
-        repo="${KEY%%|*}"
-        branch="${KEY#*|}"
-        echo "$repo $branch ${LAST_COMMITS[$KEY]}" >> "$COMMIT_FILE"
-    done
+    # --- 写回 commit 记录（排序保证行序稳定，便于 cmp 比较）---
+    TMP_COMMITS=$(mktemp)
+    {
+        for KEY in "${!LAST_COMMITS[@]}"; do
+            repo="${KEY%%|*}"
+            branch="${KEY#*|}"
+            echo "$repo $branch ${LAST_COMMITS[$KEY]}"
+        done
+    } | sort > "$TMP_COMMITS"
 
-    # 写回 release 记录
-    > "$RELEASE_FILE"
-    for repo in "${!LAST_RELEASES[@]}"; do
-        echo "$repo ${LAST_RELEASES[$repo]}" >> "$RELEASE_FILE"
-    done
+    if [[ -f "$COMMIT_FILE" ]] && cmp -s "$TMP_COMMITS" "$COMMIT_FILE"; then
+        echo "ℹ️  $COMMIT_FILE 内容无变化，未修改"
+        rm -f "$TMP_COMMITS"
+    else
+        mv "$TMP_COMMITS" "$COMMIT_FILE"
+        echo "📝 已更新 $COMMIT_FILE"
+    fi
+
+    # --- 写回 release 记录（同样排序 + 比较）---
+    TMP_RELEASES=$(mktemp)
+    {
+        for repo in "${!LAST_RELEASES[@]}"; do
+            echo "$repo ${LAST_RELEASES[$repo]}"
+        done
+    } | sort > "$TMP_RELEASES"
+
+    if [[ -f "$RELEASE_FILE" ]] && cmp -s "$TMP_RELEASES" "$RELEASE_FILE"; then
+        echo "ℹ️  $RELEASE_FILE 内容无变化，未修改"
+        rm -f "$TMP_RELEASES"
+    else
+        mv "$TMP_RELEASES" "$RELEASE_FILE"
+        echo "📝 已更新 $RELEASE_FILE"
+    fi
 
     echo "🎯 检测到代码/版本更新，需要编译"
     exit 0
