@@ -1,16 +1,31 @@
 #!/bin/bash
 
-# 仓库及其需要监控的分支，格式: "仓库URL|分支1,分支2,..."
+# ============================================================
+# 1. 仓库及其需要监控的分支，格式: "仓库URL|分支1,分支2,..."
+# ============================================================
 REPOS=(
     "https://github.com/immortalwrt/immortalwrt|openwrt-24.10,openwrt-25.12"
     "https://github.com/immortalwrt/packages|openwrt-24.10,openwrt-25.12"
     "https://github.com/immortalwrt/luci|openwrt-24.10,openwrt-25.12"
-    "https://github.com/Openwrt-Passwall/openwrt-passwall|main"
-    "https://github.com/Openwrt-Passwall/openwrt-passwall-packages|main"
+    #"https://github.com/Openwrt-Passwall/openwrt-passwall|main"
 )
 
-COMMIT_FILE="last_commits.txt"
+# ============================================================
+# 2. 需要监控 Release（版本发布）的仓库，格式: "owner/repo"
+# ============================================================
+RELEASE_REPOS=(
+    "Openwrt-Passwall/openwrt-passwall"
+)
 
+# 存储上次检查的 commit ID 的文件
+COMMIT_FILE="last_commits.txt"
+# 存储上次 Release 版本的文件
+RELEASE_FILE="last_release.txt"
+
+# ============================================================
+# 3. 初始化或读取上次的 commit ID
+#    文件格式: <repo> <branch> <commit>
+# ============================================================
 declare -A LAST_COMMITS
 if [[ -f "$COMMIT_FILE" ]]; then
     while IFS= read -r line; do
@@ -23,7 +38,26 @@ if [[ -f "$COMMIT_FILE" ]]; then
     done < "$COMMIT_FILE"
 fi
 
+# ============================================================
+# 4. 读取上次记录的 Release 版本
+#    文件格式（每行一条）: <owner/repo> <tag>
+# ============================================================
+declare -A LAST_RELEASES
+if [[ -f "$RELEASE_FILE" ]]; then
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        repo=$(echo "$line" | awk '{print $1}')
+        tag=$(echo "$line" | awk '{print $2}')
+        [[ -z "$repo" || -z "$tag" ]] && continue
+        LAST_RELEASES["$repo"]="$tag"
+    done < "$RELEASE_FILE"
+fi
+
+# ============================================================
+# 5. 检查每个仓库、每个分支是否有更新
+# ============================================================
 HAS_UPDATE=false
+
 for REPO_ENTRY in "${REPOS[@]}"; do
     REPO="${REPO_ENTRY%%|*}"
     BRANCH_LIST="${REPO_ENTRY#*|}"
@@ -35,6 +69,7 @@ for REPO_ENTRY in "${REPOS[@]}"; do
         KEY="${REPO}|${BRANCH}"
         echo "检查分支: $BRANCH ..."
 
+        # 用 --exit-code 区分 “分支不存在(2)” 和 “网络/仓库错误(其它非0)”
         LS_OUT=$(git ls-remote --exit-code "$REPO" "refs/heads/$BRANCH" 2>/dev/null)
         RC=$?
 
@@ -71,16 +106,63 @@ for REPO_ENTRY in "${REPOS[@]}"; do
     done
 done
 
+# ============================================================
+# 6. 检查每个仓库是否有新的 Release 发布
+# ============================================================
+for RELEASE_REPO in "${RELEASE_REPOS[@]}"; do
+    echo "===== 检查 Release: $RELEASE_REPO ====="
+
+    API_URL="https://api.github.com/repos/${RELEASE_REPO}/releases/latest"
+    RESPONSE=$(curl -sL \
+        -H "Accept: application/vnd.github.v3+json" \
+        -H "User-Agent: Release-Monitor" \
+        "$API_URL")
+
+    if ! echo "$RESPONSE" | grep -q '"tag_name"'; then
+        echo "⚠️  无法获取 ${RELEASE_REPO} 的 Release 信息，跳过（不影响其他检查）"
+        echo "   API 返回片段: $(echo "$RESPONSE" | head -c 200)"
+        continue
+    fi
+
+    LATEST_TAG=$(echo "$RESPONSE" | grep '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
+    OLD_TAG="${LAST_RELEASES[$RELEASE_REPO]}"
+
+    if [[ -z "$OLD_TAG" ]]; then
+        echo "🆕 首次记录 Release: $RELEASE_REPO -> $LATEST_TAG"
+        HAS_UPDATE=true
+        LAST_RELEASES["$RELEASE_REPO"]="$LATEST_TAG"
+    elif [[ "$OLD_TAG" != "$LATEST_TAG" ]]; then
+        echo "✅ 检测到新版本发布: $RELEASE_REPO"
+        echo "   旧版本: $OLD_TAG"
+        echo "   新版本: $LATEST_TAG"
+        HAS_UPDATE=true
+        LAST_RELEASES["$RELEASE_REPO"]="$LATEST_TAG"
+    else
+        echo "✅ Release 无更新: $RELEASE_REPO ($LATEST_TAG)"
+    fi
+done
+
+# ============================================================
+# 7. 如果有更新，则写回记录文件并返回成功（触发编译）
+# ============================================================
 if [[ "$HAS_UPDATE" == true ]]; then
+    # 写回 commit 记录
     > "$COMMIT_FILE"
     for KEY in "${!LAST_COMMITS[@]}"; do
         repo="${KEY%%|*}"
         branch="${KEY#*|}"
         echo "$repo $branch ${LAST_COMMITS[$KEY]}" >> "$COMMIT_FILE"
     done
-    echo "🎯 检测到代码更新，需要编译"
+
+    # 写回 release 记录
+    > "$RELEASE_FILE"
+    for repo in "${!LAST_RELEASES[@]}"; do
+        echo "$repo ${LAST_RELEASES[$repo]}" >> "$RELEASE_FILE"
+    done
+
+    echo "🎯 检测到代码/版本更新，需要编译"
     exit 0
 else
-    echo "⏭️  无代码更新，跳过编译"
+    echo "⏭️  无代码/版本更新，跳过编译"
     exit 1
 fi
