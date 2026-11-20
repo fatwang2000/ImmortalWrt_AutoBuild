@@ -42,9 +42,15 @@ jobs:
         #if: (github.event_name == 'schedule' && steps.check.outputs.has_updates == 'true')
         if: (steps.check.outputs.has_updates == 'true')
         run: |
-          git add last_commits.txt
-          git commit -m "Update last commit IDs"
-          git push
+              git add last_commits.txt last_release.txt
+
+              if git diff --cached --quiet; then
+                echo "⏭️  记录文件无实际变更，跳过提交"
+                exit 0
+              fi
+
+              git commit -m "Update last commit IDs and release versions"
+              git push
           
   discover:
     runs-on: ubuntu-24.04
