@@ -1,6 +1,6 @@
 https://github.com/Openwrt-Passwall/openwrt-passwall main 38885d95cb099ce866a563c30ec0e817c5a03490
 https://github.com/Openwrt-Passwall/openwrt-passwall-packages main 8147e8bf8abc62b5357f76defa37f380e35f6e0a
-https://github.com/immortalwrt/immortalwrt openwrt-24.10 af0775ab50d2d0e41f4e558c59208f6c9b8bdf0b
+https://github.com/immortalwrt/immortalwrt openwrt-24.10 2e13223aaa378a2cfcd01b9739aef6fa3cc645e1
 https://github.com/immortalwrt/immortalwrt openwrt-25.12 03ca1c076b94bf9731e189571e6d81741f6bc13d
 https://github.com/immortalwrt/luci openwrt-24.10 cc142cd196d425d9f14f9c18f072913730b642ce
 https://github.com/immortalwrt/luci openwrt-25.12 476b5257e3aa8274a727d648ba06c4ed284c159b
